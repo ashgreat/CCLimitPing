@@ -119,8 +119,8 @@ type tokenSource interface {
 
 // fetchWithAuth issues a GET built by buildReq using a token from src. On a 401
 // it first reloads the credential store (the official CLI may have refreshed
-// it) and, failing that, performs an OAuth refresh — each retried once. It
-// returns the response body on success.
+// it) and, failing that, asks the source to refresh. Read-only sources return a
+// clear disabled error instead. Each permitted path is retried once.
 func fetchWithAuth(ctx context.Context, src tokenSource, buildReq func(token string) (*http.Request, error)) ([]byte, error) {
 	token, err := src.Token(ctx)
 	if err != nil {

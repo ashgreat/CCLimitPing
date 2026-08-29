@@ -1,6 +1,6 @@
-// Package auth loads (and, when necessary, refreshes) the OAuth credentials
-// that Claude Code and Codex already store on disk / in the Keychain. We reuse
-// the official tools' credentials rather than managing our own login.
+// Package auth loads the OAuth credentials that Claude Code and Codex already
+// store on disk / in the Keychain. Optional refresh is explicit; the default is
+// read-only credential access.
 package auth
 
 import (
@@ -37,18 +37,26 @@ var authHTTPClient = http.DefaultClient
 var claudeKeychainEnabled = runtime.GOOS == "darwin"
 
 // ClaudeAuth provides a current Claude access token, reloading from the store
-// (Keychain on macOS, ~/.claude/.credentials.json elsewhere) and refreshing via
-// the refresh token when needed.
+// (Keychain on macOS, ~/.claude/.credentials.json elsewhere). It refreshes via
+// the refresh token only when explicitly enabled.
 type ClaudeAuth struct {
-	mu      sync.Mutex
-	access  string
-	refresh string
-	account string         // Keychain account, needed for write-back (macOS)
-	wrapper map[string]any // full "claudeAiOauth" object, preserved on write-back
+	mu           sync.Mutex
+	allowRefresh bool
+	access       string
+	refresh      string
+	account      string         // Keychain account, needed for write-back (macOS)
+	wrapper      map[string]any // full "claudeAiOauth" object, preserved on write-back
 }
 
-// NewClaudeAuth returns an empty holder; the token is loaded lazily.
-func NewClaudeAuth() *ClaudeAuth { return &ClaudeAuth{} }
+// NewClaudeAuth returns an empty holder; the token is loaded lazily. Credential
+// refresh and write-back are disabled unless allowRefresh is explicitly true.
+func NewClaudeAuth(allowRefresh ...bool) *ClaudeAuth {
+	a := &ClaudeAuth{}
+	if len(allowRefresh) > 0 {
+		a.allowRefresh = allowRefresh[0]
+	}
+	return a
+}
 
 // Token returns a cached access token, loading from the store on first use.
 func (a *ClaudeAuth) Token(ctx context.Context) (string, error) {
@@ -79,6 +87,9 @@ func (a *ClaudeAuth) Reload(ctx context.Context) (string, error) {
 func (a *ClaudeAuth) Refresh(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if !a.allowRefresh {
+		return "", fmt.Errorf("claude credential refresh is disabled; log in with Claude Code again or set claude.refresh_credentials = true")
+	}
 	if a.refresh == "" {
 		if err := a.loadLocked(); err != nil {
 			return "", err
@@ -213,11 +224,16 @@ func keychainAccount() string {
 
 func writeClaudeBlob(blob []byte, account string) error {
 	if claudeKeychainEnabled {
-		args := []string{"add-generic-password", "-U", "-s", claudeKeychainService, "-w", string(blob)}
+		// Put -w at the end so security reads the secret from stdin instead of a
+		// process argument. This avoids exposing OAuth credentials through ps(1).
+		args := []string{"add-generic-password", "-U", "-s", claudeKeychainService}
 		if account != "" {
 			args = append(args, "-a", account)
 		}
-		return exec.Command("security", args...).Run()
+		args = append(args, "-w")
+		cmd := exec.Command("security", args...)
+		cmd.Stdin = bytes.NewReader(append(blob, '\n'))
+		return cmd.Run()
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

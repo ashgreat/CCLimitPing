@@ -13,7 +13,7 @@ import (
 )
 
 // Version is the binary version, overridable at build time via -ldflags.
-var Version = "0.9.0"
+var Version = "0.9.1"
 
 // Execute runs the root command.
 func Execute() error {
@@ -32,7 +32,7 @@ func newRootCmd() *cobra.Command {
 	if text.usageTemplate != "" {
 		root.SetUsageTemplate(text.usageTemplate)
 	}
-	root.AddCommand(newStatusCmd(), newPingCmd(), newWatchCmd(), newScheduleCmd(), newContinueCmd(), newRedeemCmd(), newBackgroundCmd(), newConfigCmd(), newHooksCmd(), newHookCmd(), newUpgradeCmd(), newUninstallCmd(), newVersionCmd())
+	root.AddCommand(newStatusCmd(), newPingCmd(), newWatchCmd(), newScheduleCmd(), newContinueCmd(), newRedeemCmd(), newBackgroundCmd(), newServiceCmd(), newConfigCmd(), newHooksCmd(), newHookCmd(), newUpgradeCmd(), newUninstallCmd(), newVersionCmd())
 	localizeCompletionCommand(root, text)
 	root.SetHelpCommand(newHelpCommand(text))
 	localizeHelpFlags(root, text)

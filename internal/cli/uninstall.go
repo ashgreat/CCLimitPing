@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -38,6 +39,16 @@ func runUninstall(out, errOut io.Writer, keepConfig bool) error {
 	// Strip our hook entries from the CLI configs first, so we don't leave hooks
 	// pointing at a binary we're about to delete. Best-effort: never abort.
 	removeHooksBestEffort(errOut)
+	if runtime.GOOS == "darwin" {
+		servicePlist, err := servicePlistPath()
+		if err != nil {
+			fmt.Fprintf(errOut, "warning: locating macOS service: %v\n", err)
+		} else if _, err := os.Stat(servicePlist); err == nil {
+			if err := runServiceUninstall(out); err != nil {
+				fmt.Fprintf(errOut, "warning: removing macOS service: %v\n", err)
+			}
+		}
+	}
 
 	if err := removeExecutable(exe, out, errOut); err != nil {
 		return err

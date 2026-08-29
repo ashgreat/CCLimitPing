@@ -31,12 +31,16 @@ func (d Duration) MarshalText() ([]byte, error) {
 // ProviderConfig holds the per-provider knobs. ReasoningEffort applies to
 // Codex-backed providers and is ignored by Claude.
 type ProviderConfig struct {
-	Enabled         bool     `toml:"enabled"`
-	Prompt          string   `toml:"prompt"`
-	ExtraArgs       []string `toml:"extra_args"`
-	Model           string   `toml:"model"`
-	ReasoningEffort string   `toml:"reasoning_effort"`
-	AlignStart      string   `toml:"align_start"`
+	Enabled bool `toml:"enabled"`
+	// RefreshCredentials allows limitping to exchange and persist rotated OAuth
+	// credentials. It is deliberately opt-in because the default read-only mode
+	// never modifies the official CLI's credential store.
+	RefreshCredentials bool     `toml:"refresh_credentials"`
+	Prompt             string   `toml:"prompt"`
+	ExtraArgs          []string `toml:"extra_args"`
+	Model              string   `toml:"model"`
+	ReasoningEffort    string   `toml:"reasoning_effort"`
+	AlignStart         string   `toml:"align_start"`
 	// ContinuePrompt is the message injected into a proxied session
 	// (`limitping continue <provider>`) when the 5h limit recovers.
 	// Empty falls back to "continue".
@@ -73,18 +77,20 @@ func Default() Config {
 		Notify:          true,
 		UsageDisplay:    "used",
 		Claude: ProviderConfig{
-			Enabled:        true,
-			Prompt:         ".",
-			Model:          "haiku",
-			ExtraArgs:      []string{},
-			ContinuePrompt: "continue",
+			Enabled:            true,
+			RefreshCredentials: false,
+			Prompt:             ".",
+			Model:              "haiku",
+			ExtraArgs:          []string{},
+			ContinuePrompt:     "continue",
 		},
 		Codex: ProviderConfig{
-			Enabled:         true,
-			Prompt:          "ok",
-			Model:           "gpt-5.4-mini",
-			ReasoningEffort: "low",
-			ContinuePrompt:  "continue",
+			Enabled:            false,
+			RefreshCredentials: false,
+			Prompt:             "ok",
+			Model:              "gpt-5.4-mini",
+			ReasoningEffort:    "low",
+			ContinuePrompt:     "continue",
 		},
 		Spark: ProviderConfig{
 			Enabled:         false,
@@ -191,6 +197,10 @@ usage_display = "used"
 
 [claude]
 enabled = true
+# Read OAuth credentials but never refresh or rewrite them by default. If a
+# token expires, log in with Claude Code again. Set true only if you explicitly
+# accept limitping updating Claude Code's credential store.
+refresh_credentials = false
 prompt = "."
 # Cheapest tier; triggering doesn't need a SOTA model and this avoids burning
 # Sonnet/Opus budget (incl. the separate weekly Opus bucket). Alias or full id.
@@ -205,7 +215,9 @@ align_start = ""
 continue_prompt = "continue"
 
 [codex]
-enabled = true
+enabled = false
+# Same read-only default as Claude. This option has no effect while disabled.
+refresh_credentials = false
 prompt = "ok"
 # Cheapest Codex model for triggering (see ~/.codex/models_cache.json for the
 # list available to your plan). Empty = use the Codex default model.

@@ -18,17 +18,24 @@ const codexOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 const codexTokenEndpoint = "https://auth.openai.com/oauth/token"
 
-// CodexAuth loads and refreshes the Codex OAuth tokens stored in
-// ~/.codex/auth.json (or $CODEX_HOME/auth.json).
+// CodexAuth loads the Codex OAuth tokens stored in ~/.codex/auth.json (or
+// $CODEX_HOME/auth.json). Refresh and write-back are opt-in.
 type CodexAuth struct {
-	mu        sync.Mutex
-	access    string
-	refresh   string
-	accountID string
-	raw       map[string]any // full auth.json, preserved on write-back
+	mu           sync.Mutex
+	allowRefresh bool
+	access       string
+	refresh      string
+	accountID    string
+	raw          map[string]any // full auth.json, preserved on write-back
 }
 
-func NewCodexAuth() *CodexAuth { return &CodexAuth{} }
+func NewCodexAuth(allowRefresh ...bool) *CodexAuth {
+	a := &CodexAuth{}
+	if len(allowRefresh) > 0 {
+		a.allowRefresh = allowRefresh[0]
+	}
+	return a
+}
 
 // Token returns a cached access token, loading from auth.json on first use.
 func (a *CodexAuth) Token(ctx context.Context) (string, error) {
@@ -71,6 +78,9 @@ func (a *CodexAuth) Reload(ctx context.Context) (string, error) {
 func (a *CodexAuth) Refresh(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if !a.allowRefresh {
+		return "", fmt.Errorf("codex credential refresh is disabled; log in with Codex again or set codex.refresh_credentials = true")
+	}
 	if a.refresh == "" {
 		if err := a.loadLocked(); err != nil {
 			return "", err

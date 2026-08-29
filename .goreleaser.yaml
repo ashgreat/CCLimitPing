@@ -53,31 +53,6 @@ changelog:
 
 release:
   github:
-    owner: wavever
+    owner: ashgreat
     name: CCLimitPing
-
-# Homebrew tap (cask). Enabled, but auto-skips the push until you wire up the tap,
-# so it won't break a release before then. To turn it on:
-#   1. Create a public repo:  github.com/wavever/homebrew-tap
-#   2. Create a fine-grained PAT with Contents:write on that repo and add it as
-#      the CCLimitPing repo secret HOMEBREW_TAP_GITHUB_TOKEN (the release
-#      workflow already forwards it).
-# Once that secret exists, the next tagged release publishes the cask and
-# `brew install wavever/tap/limitping` works. No token => cask is built but
-# not pushed.
-homebrew_casks:
-  - name: limitping
-    repository:
-      owner: wavever
-      name: homebrew-tap
-      token: '{{ index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}'
-    skip_upload: '{{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
-    homepage: "https://github.com/wavever/CCLimitPing"
-    description: "Keep Claude Code / Codex rate-limit windows back-to-back"
-    # Unsigned binary: strip the macOS quarantine flag on install so it runs.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/limitping"]
           end

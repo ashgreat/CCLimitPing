@@ -7,12 +7,15 @@
 [English](README.md) | **中文**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![CI](https://github.com/wavever/CCLimitPing/actions/workflows/ci.yml/badge.svg)](https://github.com/wavever/CCLimitPing/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/wavever/CCLimitPing?include_prereleases&sort=semver)](https://github.com/wavever/CCLimitPing/releases)
+[![CI](https://github.com/ashgreat/CCLimitPing/actions/workflows/ci.yml/badge.svg)](https://github.com/ashgreat/CCLimitPing/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ashgreat/CCLimitPing?include_prereleases&sort=semver)](https://github.com/ashgreat/CCLimitPing/releases)
 ![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
 在上一个窗口重置的瞬间,立即启动下一个 **Claude Code** / **Codex** / **Spark** 限额窗口。
+
+> 此加固分支默认只启用 Claude、只读访问凭据、钩子需明确选择启用，并提供经过校验的
+> Release 下载及内置 macOS 服务。完整的最新说明以 [English README](README.md) 为准。
 
 Claude Code、Codex 和 Spark 的订阅限额按 **5 小时滚动窗口**(外加周限额)计算。新的 5h 窗口
 不会因为上一个窗口重置就自动开始,而是从你下一次真正发起计费请求时才开始。如果你隔了
@@ -42,15 +45,15 @@ spark   ✓ pinged (12.4s)
 ## 快速开始
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wavever/CCLimitPing/main/install.sh | sh
+git clone https://github.com/ashgreat/CCLimitPing.git
+cd CCLimitPing
+go build -o bin/limitping ./cmd/limitping
+install -m 0755 bin/limitping ~/.local/bin/limitping
 limitping config init
 limitping status
 limitping ping --dry-run
-limitping watch                # 前台低功耗运行(Ctrl-C 停止)
-# ...或在后台运行,释放终端:
-limitping bg start
-limitping bg status
-limitping bg logs -f
+limitping service install claude
+limitping service status
 ```
 
 如果你想先确认会发生什么、但不消耗 Provider 额度,可以先运行
@@ -77,7 +80,7 @@ limitping bg logs -f
 当 `watch` 发现 5h 窗口已经重置时,会先检查是否有 Claude/Codex 会话正处于对话进行中。
 如果有,`limitping` 会等待并重新读取用量,而不是自己发 ping,因为这个会话的下一次模型
 请求会自然起算新窗口。Spark 使用 Codex 活跃会话信号。这个检查依赖
-[CLI 钩子](#活跃会话检测钩子)(安装脚本会自动装好);未安装钩子时,`limitping` 会跳过该检查,
+[CLI 钩子](#活跃会话检测钩子)(需要明确选择安装);未安装钩子时,`limitping` 会跳过该检查,
 窗口一重置就直接 ping(绝不靠扫描进程来猜)。
 
 - **Claude**:用 macOS 钥匙串(`Claude Code-credentials`)或 `~/.claude/.credentials.json`
@@ -94,21 +97,24 @@ limitping bg logs -f
   `additional_rate_limits` 中读取 `GPT-5.3-Codex-Spark` 条目,用
   `gpt-5.3-codex-spark` 模型发送 ping,并作为独立的 `spark` Provider 展示。
 
-Claude/Codex 的 token 直接复用官方工具(无需另外登录),遇到 401 会自动刷新。Spark 复用
-Codex token。
+Claude/Codex 的 token 直接复用官方工具(无需另外登录)。默认不会刷新或写回凭据；遇到
+401 时会安全停止并要求重新登录。只有明确设置 `refresh_credentials = true` 才会自动刷新。
 
 ## 安装
 
 `limitping` 是一个自包含的单文件二进制——**普通用户无需安装 Go**。
 
-**一行脚本**(macOS / Linux):
+**先审阅再运行安装脚本**(macOS / Linux):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wavever/CCLimitPing/main/install.sh | sh
+git clone https://github.com/ashgreat/CCLimitPing.git
+cd CCLimitPing
+less install.sh
+sh install.sh
 ```
 
-会从[最新 Release](https://github.com/wavever/CCLimitPing/releases/latest)下载对应
-平台的预编译二进制,装到 `/usr/local/bin`(或 `~/.local/bin`)。可用
+会从[最新 Release](https://github.com/ashgreat/CCLimitPing/releases/latest)下载对应
+平台的预编译二进制并校验 SHA-256,装到 `/usr/local/bin`(或 `~/.local/bin`)。可用
 `LIMITPING_INSTALL_DIR` 覆盖安装目录。
 
 **升级** —— 用最新 Release 替换已安装的二进制:
@@ -130,7 +136,7 @@ limitping uninstall
 使用 `limitping uninstall --keep-config` 可保留 `~/.config/limitping`(或
 `$XDG_CONFIG_HOME/limitping`)。
 
-**手动下载** —— 从 [Releases](https://github.com/wavever/CCLimitPing/releases) 页面
+**手动下载** —— 从 [Releases](https://github.com/ashgreat/CCLimitPing/releases) 页面
 下载对应平台的压缩包(macOS/Linux 是 `.tar.gz`,Windows 是 `.zip`):
 
 ```sh
@@ -138,14 +144,11 @@ tar -xzf limitping_darwin_arm64.tar.gz
 sudo mv limitping /usr/local/bin/
 ```
 
-**Homebrew**(macOS / Linux)—— `brew install wavever/tap/limitping`
-_(配好 Homebrew tap 后可用;见 `.goreleaser.yaml`)。_
-
 **从源码**(开发者,需要 Go 1.25+):
 
 ```sh
-go install github.com/wavever/CCLimitPing/cmd/limitping@latest
-# 或在克隆后:
+git clone https://github.com/ashgreat/CCLimitPing.git
+cd CCLimitPing
 go build -o bin/limitping ./cmd/limitping
 ```
 
@@ -300,6 +303,7 @@ usage_display    = "used" # 文本状态显示 "used" 或 "remaining"
 
 [claude]
 enabled    = true
+refresh_credentials = false
 prompt     = "."
 model      = "haiku"      # 最便宜的档位;触发并不需要 SOTA 模型
 extra_args = []           # 额外 Claude CLI 参数;print/headless-only 参数会被忽略
@@ -307,7 +311,8 @@ align_start = ""          # 可选 RFC3339:首个窗口的相位锚点;留空 = 
 continue_prompt = "continue"  # continue 在 5h 恢复时注入的消息;留空 = "continue"
 
 [codex]
-enabled          = true
+enabled          = false
+refresh_credentials = false
 prompt           = "ok"
 model            = "gpt-5.4-mini"  # 用于触发的最便宜 Codex 模型
 reasoning_effort = "low"  # 启用 web_search/image_gen 工具时,"minimal" 会被拒绝
@@ -350,13 +355,13 @@ Claude/Codex/Spark 运行时都拿不到每个模型的价格(Anthropic 本地�
 ### 活跃会话检测(钩子)
 
 窗口重置时,`watch` 会避免在你正干活时发 ping——你那一轮对话本身就会起算下一个窗口。
-这依赖 **CLI 钩子**,安装脚本会自动帮你装好。如果没装钩子,`limitping` 会**跳过**这个检查,
+这依赖 **CLI 钩子**,安装脚本不会自动修改设置。如果没装钩子,`limitping` 会**跳过**这个检查,
 窗口一重置就直接 ping(绝不靠扫描进程来猜)。
 
-安装脚本会自动执行;手动(重新)安装:
+需要时明确启用 Claude 钩子:
 
 ```sh
-limitping hooks install        # 两个 Provider 都装(或 limitping hooks install claude)
+limitping hooks install claude
 ```
 
 这会把 limitping 的钩子写入 `~/.claude/settings.json` 和 `~/.codex/hooks.json`(保留你已有
@@ -402,31 +407,17 @@ limitping bg stop           # 停止
 运行一个监听(前台或后台),后台输出写入 `~/.config/limitping/bg.log`(遵循 `$XDG_CONFIG_HOME`)。该进程
 会脱离到独立会话,关闭终端后依然存活——但**开机不会自启**。
 
-如需在 macOS 上**开机自启**,请改用 `launchd` 服务。创建
-`~/Library/LaunchAgents/com.limitping.watch.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.limitping.watch</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/ABSOLUTE/PATH/TO/limitping</string>
-    <string>watch</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/limitping.log</string>
-  <key>StandardErrorPath</key><string>/tmp/limitping.err</string>
-</dict>
-</plist>
-```
+macOS 上请使用内置服务实现开机/登录自启和失败重启:
 
 ```sh
-launchctl load ~/Library/LaunchAgents/com.limitping.watch.plist
+limitping bg stop
+limitping service install claude
+limitping service status
 ```
+
+该服务默认通过 `caffeinate -s` 在连接交流电时防止空闲系统睡眠。合盖或强制睡眠时仍无法
+运行。使用 `--prevent-sleep=false` 可关闭此功能；`limitping service uninstall` 会删除
+LaunchAgent，但保留配置和日志。
 
 ## 自动续跑挂起的任务
 

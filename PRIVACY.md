@@ -20,7 +20,10 @@ The tool may write:
 - `~/.config/limitping/litellm_prices.json`, a cached copy of the LiteLLM pricing
   dataset used for Codex cost estimates
 - Rotated Claude/Codex/Spark OAuth tokens back to the same credential stores
-  used by the official CLIs, when a refresh is required
+  used by the official CLIs only when `refresh_credentials = true` for that
+  provider; the default is read-only
+- `~/Library/LaunchAgents/com.ashgreat.limitping.plist` when you explicitly run
+  `limitping service install` on macOS
 
 ## Network Requests
 
@@ -53,3 +56,5 @@ logs you choose to keep.
 - Disable a provider in `~/.config/limitping/config.toml`
 - Delete `~/.config/limitping/litellm_prices.json` to remove the pricing cache
 - Run `watch --dry-run` to verify scheduling behavior without sending pings
+- Leave `refresh_credentials = false` to prevent credential-store writes
+- Install or remove active-session hooks explicitly with `limitping hooks`

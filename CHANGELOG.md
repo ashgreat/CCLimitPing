@@ -5,6 +5,23 @@ All notable changes to this project should be documented here.
 This project uses version tags such as `v0.2.0`. Release binaries are published
 through GitHub Actions and GoReleaser.
 
+## v0.9.1
+
+- Added `limitping service install|status|uninstall` for a persistent per-user
+  macOS LaunchAgent. It starts at login, restarts after failure, preserves the
+  invoking shell's `PATH`, and defaults to `caffeinate -s` so idle system sleep
+  is prevented while the Mac is connected to AC power.
+- Made OAuth credential refresh and write-back opt-in with
+  `refresh_credentials = true`; the default usage path is read-only and fails
+  closed when the official CLI needs a fresh login. macOS Keychain updates, if
+  enabled, send credential data over stdin instead of process arguments.
+- Defaulted to Claude-only operation. Codex and Spark remain available through
+  explicit configuration or command selection.
+- Stopped the installer from modifying Claude/Codex hook settings. Hooks remain
+  available through the explicit `limitping hooks install` command.
+- Added SHA-256 verification to installation and self-upgrade downloads, plus
+  macOS-service, checksum, and credential-mode tests.
+
 ## v0.9.0
 
 - New `limitping redeem` spends a banked Codex rate-limit reset credit (with
