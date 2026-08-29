@@ -39,9 +39,12 @@ func TestLoadReturnsDefaultsWithoutFile(t *testing.T) {
 		cfg.ResetBuffer.Duration != def.ResetBuffer.Duration || cfg.Notify != def.Notify {
 		t.Fatalf("Load() = %+v, want defaults %+v", cfg, def)
 	}
-	if !cfg.Claude.Enabled || !cfg.Codex.Enabled || cfg.Spark.Enabled {
-		t.Fatalf("default provider enablement = claude:%t codex:%t spark:%t, want true/true/false",
+	if !cfg.Claude.Enabled || cfg.Codex.Enabled || cfg.Spark.Enabled {
+		t.Fatalf("default provider enablement = claude:%t codex:%t spark:%t, want true/false/false",
 			cfg.Claude.Enabled, cfg.Codex.Enabled, cfg.Spark.Enabled)
+	}
+	if cfg.Claude.RefreshCredentials || cfg.Codex.RefreshCredentials {
+		t.Fatal("credential refresh must be disabled by default")
 	}
 }
 

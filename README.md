@@ -7,13 +7,17 @@
 **English** | [中文](README.zh-CN.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![CI](https://github.com/wavever/CCLimitPing/actions/workflows/ci.yml/badge.svg)](https://github.com/wavever/CCLimitPing/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/wavever/CCLimitPing?include_prereleases&sort=semver)](https://github.com/wavever/CCLimitPing/releases)
+[![CI](https://github.com/ashgreat/CCLimitPing/actions/workflows/ci.yml/badge.svg)](https://github.com/ashgreat/CCLimitPing/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ashgreat/CCLimitPing?include_prereleases&sort=semver)](https://github.com/ashgreat/CCLimitPing/releases)
 ![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
 Start the next **Claude Code**, **Codex**, or **Spark** rate-limit window the
 moment the previous one resets.
+
+> This hardened fork defaults to Claude-only operation, read-only credential
+> access, opt-in hooks, verified release downloads, and a managed macOS service.
+> The upstream project is [wavever/CCLimitPing](https://github.com/wavever/CCLimitPing).
 
 Claude Code, Codex, and Spark subscription limits run on **5-hour rolling
 windows** (plus a weekly cap). A fresh 5h window does not start just because the
@@ -51,15 +55,15 @@ spark   ✓ pinged (12.4s)
 ## Quick start
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wavever/CCLimitPing/main/install.sh | sh
+git clone https://github.com/ashgreat/CCLimitPing.git
+cd CCLimitPing
+go build -o bin/limitping ./cmd/limitping
+install -m 0755 bin/limitping ~/.local/bin/limitping
 limitping config init
 limitping status
 limitping ping --dry-run
-limitping watch                # foreground, low-power (Ctrl-C to stop)
-# ...or run it in the background, freeing your terminal:
-limitping bg start
-limitping bg status
-limitping bg logs -f
+limitping service install claude  # macOS: starts now and after login/reboot
+limitping service status
 ```
 
 Use dry-run first if you want to inspect what would happen without consuming
@@ -87,16 +91,15 @@ When `watch` sees a 5h window has reset, it first checks whether a Claude/Codex
 session is actively mid-turn. If one is, `limitping` waits and re-reads usage
 instead of sending its own ping, because that session's next model request will
 start the new window naturally. Spark uses the Codex activity signal. This check
-relies on the [CLI hooks](#active-session-detection-hooks) (installed
-automatically by the install script); without them, `limitping` skips the check
-and pings as soon as the window resets.
+relies on the optional [CLI hooks](#active-session-detection-hooks); without
+them, `limitping` skips the check and pings as soon as the window resets.
 
 - **Claude**: reads `GET https://api.anthropic.com/api/oauth/usage` using the
   OAuth token from the macOS Keychain (`Claude Code-credentials`) or
   `~/.claude/.credentials.json`. Triggering uses a TTY-backed interactive
-  `claude "<prompt>"` session, so it continues to start the Claude
-  subscription-backed window after the headless print command moves to Agent
-  SDK/API credits. If the usage endpoint returns an ambiguous 429, limitping
+  `claude "<prompt>"` session. This follows the same subscription-backed path
+  as a normal Claude Code session and remains robust if headless-mode accounting
+  changes in the future. If the usage endpoint returns an ambiguous 429, limitping
   uses the free token-counting endpoint (which does not create a Message) to
   distinguish a real endpoint throttle from Claude Code subscription access
   being disabled.
@@ -109,22 +112,30 @@ and pings as soon as the window resets.
   `additional_rate_limits`, sends the ping with model `gpt-5.3-codex-spark`,
   and appears as a separate `spark` provider.
 
-Claude/Codex tokens are reused from the official tools (no separate login) and
-refreshed on 401. Spark reuses the Codex token.
+Claude/Codex tokens are reused from the official tools (no separate login).
+Credential refresh and write-back are disabled by default. On a 401, limitping
+first reloads the official credential store, then fails closed and asks you to
+log in again. Set `refresh_credentials = true` for a provider only if you
+explicitly accept automatic OAuth refresh and write-back. Spark reuses Codex's
+setting and token.
 
 ## Install
 
 `limitping` ships as a single self-contained binary — **no Go required**.
 
-**One-line script** (macOS / Linux):
+**Reviewed install script** (macOS / Linux):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wavever/CCLimitPing/main/install.sh | sh
+git clone https://github.com/ashgreat/CCLimitPing.git
+cd CCLimitPing
+less install.sh
+sh install.sh
 ```
 
-Downloads the right prebuilt binary from the
-[latest release](https://github.com/wavever/CCLimitPing/releases/latest) into
-`/usr/local/bin` (or `~/.local/bin`). Override with `LIMITPING_INSTALL_DIR`.
+Downloads the right prebuilt binary and verifies it against the SHA-256 file
+published with the [latest release](https://github.com/ashgreat/CCLimitPing/releases/latest),
+then installs into `/usr/local/bin` (or `~/.local/bin`). Override with
+`LIMITPING_INSTALL_DIR`. The installer never modifies Claude or Codex settings.
 
 **Upgrade** — replace the installed binary with the latest release:
 
@@ -146,7 +157,7 @@ Use `limitping uninstall --keep-config` to preserve `~/.config/limitping` (or
 `$XDG_CONFIG_HOME/limitping`).
 
 **Manual download** — grab the archive for your platform from the
-[Releases](https://github.com/wavever/CCLimitPing/releases) page (`.tar.gz` for
+[Releases](https://github.com/ashgreat/CCLimitPing/releases) page (`.tar.gz` for
 macOS/Linux, `.zip` for Windows):
 
 ```sh
@@ -154,14 +165,11 @@ tar -xzf limitping_darwin_arm64.tar.gz
 sudo mv limitping /usr/local/bin/
 ```
 
-**Homebrew** (macOS / Linux) — `brew install wavever/tap/limitping`
-_(works once the Homebrew tap is set up — see `.goreleaser.yaml`)._
-
 **From source** (developers, needs Go 1.25+):
 
 ```sh
-go install github.com/wavever/CCLimitPing/cmd/limitping@latest
-# or, from a clone:
+git clone https://github.com/ashgreat/CCLimitPing.git
+cd CCLimitPing
 go build -o bin/limitping ./cmd/limitping
 ```
 
@@ -195,7 +203,10 @@ limitping bg start             # run watch in the background, freeing the termin
 limitping bg status            # running? + each watched provider's usage (alias: limitping bg)
 limitping bg logs -f           # follow the background watcher's log
 limitping bg stop              # stop the background watcher
-limitping hooks install        # install active-session detection hooks (claude|codex|all)
+limitping service install claude # macOS persistent service + AC sleep prevention
+limitping service status       # show LaunchAgent status and log paths
+limitping service uninstall    # stop/remove service; preserve config and logs
+limitping hooks install claude # opt in to active-session detection hooks
 limitping hooks uninstall      # remove those hooks
 limitping version              # print the version (aliases: v, ver)
 limitping upgrade              # update to the latest GitHub release (aliases: up, update)
@@ -319,6 +330,7 @@ usage_display    = "used" # text status: "used" or "remaining"
 
 [claude]
 enabled    = true
+refresh_credentials = false # read-only; log in again if the OAuth token expires
 prompt     = "."
 model      = "haiku"      # cheapest tier; triggering doesn't need a SOTA model
 extra_args = []           # extra Claude CLI args; print/headless-only flags are ignored
@@ -326,7 +338,8 @@ align_start = ""          # optional RFC3339 anchor for the first window; empty 
 continue_prompt = "continue"  # message `continue` injects on 5h recovery; empty = "continue"
 
 [codex]
-enabled          = true
+enabled          = false # this fork defaults to Claude only
+refresh_credentials = false
 prompt           = "ok"
 model            = "gpt-5.4-mini"  # cheapest Codex model for triggering
 reasoning_effort = "low"  # "minimal" is rejected when web_search/image_gen tools are enabled
@@ -376,14 +389,13 @@ per provider if you prefer.
 
 At a window reset, `watch` avoids pinging while you're actively working — that
 turn would start the next window on its own. This relies on **CLI hooks**, which
-the install script sets up for you. If they aren't installed, `limitping` skips
-the check entirely and pings right at reset (it never guesses from the process
-list).
+are never installed implicitly. If they aren't installed, `limitping` skips the
+check entirely and pings right at reset (it never guesses from the process list).
 
-The install script runs this automatically; to (re)install manually:
+To opt in for Claude only:
 
 ```sh
-limitping hooks install        # both providers (or: limitping hooks install claude)
+limitping hooks install claude
 ```
 
 This registers limitping's hooks in `~/.claude/settings.json` and
@@ -436,31 +448,22 @@ at a time, and background output is written to
 into its own session, so it survives the shell closing — but it does **not**
 restart on reboot.
 
-For **start-at-login** on macOS, use a `launchd` agent instead. Create
-`~/Library/LaunchAgents/com.limitping.watch.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.limitping.watch</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/ABSOLUTE/PATH/TO/limitping</string>
-    <string>watch</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/limitping.log</string>
-  <key>StandardErrorPath</key><string>/tmp/limitping.err</string>
-</dict>
-</plist>
-```
+On macOS, use the managed LaunchAgent instead:
 
 ```sh
-launchctl load ~/Library/LaunchAgents/com.limitping.watch.plist
+limitping bg stop                 # required if a detached watcher is running
+limitping service install claude  # RunAtLoad + KeepAlive + caffeinate -s
+limitping service status
 ```
+
+The service records the absolute binary path and your current `PATH`, starts at
+login, restarts after failure, and by default uses `caffeinate -s` to prevent
+idle system sleep while the Mac is connected to AC power. It cannot run while a
+laptop lid is closed or the Mac is otherwise forced to sleep. Use
+`--prevent-sleep=false` if you do not want the AC-power sleep assertion. Logs
+are under `~/.config/limitping/`. `service status` also reports the watcher PID
+and seven-day ping success/failure history. `limitping service uninstall`
+removes only the LaunchAgent and preserves configuration and logs.
 
 ## Auto-continue a parked task
 
@@ -514,7 +517,7 @@ internal/activity        hook-based active-session state (shared by the hook cmd
 internal/pricing         pricing helpers for providers that expose token usage
 internal/scheduler       the watch engine (sleep-until-reset, weekly-respect, backoff)
 internal/notify          macOS osascript notifications
-internal/cli             cobra commands: status, ping, watch, schedule, continue, background, config, hooks, upgrade, uninstall, version
+internal/cli             cobra commands: status, ping, watch, schedule, continue, background, service, config, hooks, upgrade, uninstall, version
 ```
 
 ## Contributing

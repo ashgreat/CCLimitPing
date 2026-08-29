@@ -409,7 +409,7 @@ Examples:
 	hooksShort: "Manage Claude/Codex hooks for accurate active-session detection",
 	hooksLong: `Manage the hooks that let limitping tell whether a Claude Code or Codex session is actually mid-turn (rather than merely running).
 
-When installed, limitping defers its ping while you're actively working and resumes once the turn ends. Spark uses the Codex hook signal because it runs through the Codex CLI. Without hooks limitping skips this check and pings as soon as the window resets. The install script sets these hooks up automatically.`,
+When installed, limitping defers its ping while you're actively working and resumes once the turn ends. Spark uses the Codex hook signal because it runs through the Codex CLI. Without hooks limitping skips this check and pings as soon as the window resets. Hooks are always an explicit opt-in.`,
 	hooksInstallShort: "Register limitping's hooks in the Claude/Codex configs",
 	hooksInstallLong: `Register limitping's hooks in ~/.claude/settings.json and ~/.codex/hooks.json (existing settings are preserved; a .bak backup is written).
 

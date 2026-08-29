@@ -12,7 +12,7 @@ func TestDefaultConfigDoesNotEnableSpark(t *testing.T) {
 	cfg := config.Default()
 
 	providers := enabledProviders(cfg)
-	if got, want := providerNames(providers), []string{"claude", "codex"}; !sameStrings(got, want) {
+	if got, want := providerNames(providers), []string{"claude"}; !sameStrings(got, want) {
 		t.Fatalf("enabled providers = %#v, want %#v", got, want)
 	}
 
@@ -20,7 +20,7 @@ func TestDefaultConfigDoesNotEnableSpark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildTargets: %v", err)
 	}
-	if got, want := targetNames(targets), []string{"claude", "codex"}; !sameStrings(got, want) {
+	if got, want := targetNames(targets), []string{"claude"}; !sameStrings(got, want) {
 		t.Fatalf("targets = %#v, want %#v", got, want)
 	}
 }
@@ -50,7 +50,7 @@ func TestEnabledSparkAppearsInAllSelections(t *testing.T) {
 	cfg.Spark.Enabled = true
 
 	providers := enabledProviders(cfg)
-	if got, want := providerNames(providers), []string{"claude", "codex", "spark"}; !sameStrings(got, want) {
+	if got, want := providerNames(providers), []string{"claude", "spark"}; !sameStrings(got, want) {
 		t.Fatalf("enabled providers = %#v, want %#v", got, want)
 	}
 
@@ -58,7 +58,7 @@ func TestEnabledSparkAppearsInAllSelections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildTargets: %v", err)
 	}
-	if got, want := targetNames(targets), []string{"claude", "codex", "spark"}; !sameStrings(got, want) {
+	if got, want := targetNames(targets), []string{"claude", "spark"}; !sameStrings(got, want) {
 		t.Fatalf("targets = %#v, want %#v", got, want)
 	}
 }

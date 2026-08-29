@@ -75,16 +75,16 @@ func (*ClaudeSubscriptionAccessError) Error() string {
 func (e *ClaudeSubscriptionAccessError) Unwrap() error { return e.Err }
 
 // Claude reads usage via the OAuth usage endpoint and triggers windows via the
-// interactive, TTY-backed Claude Code CLI. Print mode is intentionally avoided
-// because it is billed through Agent SDK/API credits rather than Claude
-// subscription limits.
+// interactive, TTY-backed Claude Code CLI. The interactive path follows the
+// same subscription-backed flow as a normal Claude Code session even if
+// Anthropic changes headless-mode accounting in the future.
 type Claude struct {
 	cfg  config.ProviderConfig
 	auth *auth.ClaudeAuth
 }
 
 func NewClaude(cfg config.ProviderConfig) *Claude {
-	return &Claude{cfg: cfg, auth: auth.NewClaudeAuth()}
+	return &Claude{cfg: cfg, auth: auth.NewClaudeAuth(cfg.RefreshCredentials)}
 }
 
 func (c *Claude) Name() string { return "claude" }

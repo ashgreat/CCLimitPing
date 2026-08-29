@@ -48,7 +48,7 @@ func writeCodexAuth(t *testing.T, contents string) string {
 func TestCodexTokenLoadsFromAuthJSON(t *testing.T) {
 	writeCodexAuth(t, `{"tokens":{"access_token":"at-1","refresh_token":"rt-1","account_id":"acct-1"}}`)
 
-	a := NewCodexAuth()
+	a := NewCodexAuth(true)
 	tok, err := a.Token(context.Background())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
@@ -105,7 +105,7 @@ func TestCodexRefreshRotatesAndPersists(t *testing.T) {
 		return jsonResponse(200, `{"access_token":"at-new","refresh_token":"rt-new","id_token":"id-new"}`), nil
 	})
 
-	a := NewCodexAuth()
+	a := NewCodexAuth(true)
 	tok, err := a.Refresh(context.Background())
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
@@ -142,7 +142,7 @@ func TestCodexRefreshFailures(t *testing.T) {
 		fakeRefreshEndpoint(t, func(*http.Request) (*http.Response, error) {
 			return jsonResponse(500, `{}`), nil
 		})
-		if _, err := NewCodexAuth().Refresh(context.Background()); err == nil {
+		if _, err := NewCodexAuth(true).Refresh(context.Background()); err == nil {
 			t.Fatal("Refresh accepted HTTP 500")
 		}
 	})
@@ -151,7 +151,7 @@ func TestCodexRefreshFailures(t *testing.T) {
 		fakeRefreshEndpoint(t, func(*http.Request) (*http.Response, error) {
 			return jsonResponse(200, `{"access_token":""}`), nil
 		})
-		if _, err := NewCodexAuth().Refresh(context.Background()); err == nil {
+		if _, err := NewCodexAuth(true).Refresh(context.Background()); err == nil {
 			t.Fatal("Refresh accepted an empty access_token")
 		}
 	})
@@ -161,7 +161,7 @@ func TestCodexRefreshFailures(t *testing.T) {
 			t.Fatal("refresh request sent without a refresh token")
 			return nil, nil
 		})
-		if _, err := NewCodexAuth().Refresh(context.Background()); err == nil {
+		if _, err := NewCodexAuth(true).Refresh(context.Background()); err == nil {
 			t.Fatal("Refresh succeeded without a refresh token")
 		}
 	})
@@ -248,7 +248,7 @@ func TestClaudeRefreshRotatesAndPersists(t *testing.T) {
 		return jsonResponse(200, `{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}`), nil
 	})
 
-	a := NewClaudeAuth()
+	a := NewClaudeAuth(true)
 	tok, err := a.Refresh(context.Background())
 	if err != nil {
 		t.Fatalf("Refresh: %v", err)
@@ -286,7 +286,19 @@ func TestClaudeRefreshFailsWithoutRefreshToken(t *testing.T) {
 		t.Fatal("refresh request sent without a refresh token")
 		return nil, nil
 	})
-	if _, err := NewClaudeAuth().Refresh(context.Background()); err == nil {
+	if _, err := NewClaudeAuth(true).Refresh(context.Background()); err == nil {
 		t.Fatal("Refresh succeeded without a refresh token")
+	}
+}
+
+func TestCredentialRefreshIsOptIn(t *testing.T) {
+	writeCodexAuth(t, `{"tokens":{"access_token":"at","refresh_token":"rt"}}`)
+	if _, err := NewCodexAuth().Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("Codex Refresh error = %v, want disabled error", err)
+	}
+
+	writeClaudeCreds(t, `{"claudeAiOauth":{"accessToken":"at","refreshToken":"rt"}}`)
+	if _, err := NewClaudeAuth().Refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("Claude Refresh error = %v, want disabled error", err)
 	}
 }

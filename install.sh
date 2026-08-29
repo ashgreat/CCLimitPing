@@ -1,13 +1,14 @@
 #!/bin/sh
-# limitping installer — downloads the right prebuilt binary from the latest
-# GitHub release. No Go required.
+# limitping installer — downloads and verifies the right prebuilt binary from
+# the latest GitHub release. No Go required.
 #
-#   curl -fsSL https://raw.githubusercontent.com/wavever/CCLimitPing/main/install.sh | sh
+# Review this script locally before running it. Override the release source with
+# LIMITPING_REPO=owner/repo when testing another trusted fork.
 #
 # Override the install directory with LIMITPING_INSTALL_DIR=/path sh install.sh
 set -eu
 
-REPO="wavever/CCLimitPing"
+REPO="${LIMITPING_REPO:-ashgreat/CCLimitPing}"
 BIN="limitping"
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -24,18 +25,45 @@ esac
 
 asset="${BIN}_${os}_${arch}.tar.gz"
 url="https://github.com/${REPO}/releases/latest/download/${asset}"
+checksum_url="https://github.com/${REPO}/releases/latest/download/checksums.txt"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+download() {
+  source_url=$1
+  destination=$2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$source_url" -o "$destination"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$destination" "$source_url"
+  else
+    echo "limitping: need curl or wget" >&2; exit 1
+  fi
+}
+
 echo "Downloading ${url}"
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$url" -o "$tmp/$asset"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$tmp/$asset" "$url"
-else
-  echo "limitping: need curl or wget" >&2; exit 1
+download "$url" "$tmp/$asset"
+download "$checksum_url" "$tmp/checksums.txt"
+
+expected=$(awk -v name="$asset" '$2 == name || $2 == "*" name { print $1; exit }' "$tmp/checksums.txt")
+if [ -z "$expected" ]; then
+  echo "limitping: ${asset} is missing from the published release checksums" >&2
+  exit 1
 fi
+if command -v shasum >/dev/null 2>&1; then
+  actual=$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')
+elif command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum "$tmp/$asset" | awk '{print $1}')
+else
+  echo "limitping: need shasum or sha256sum to verify the download" >&2
+  exit 1
+fi
+if [ "$actual" != "$expected" ]; then
+  echo "limitping: checksum verification failed for ${asset}" >&2
+  exit 1
+fi
+echo "Verified SHA-256 checksum"
 
 tar -xzf "$tmp/$asset" -C "$tmp"
 
@@ -66,25 +94,12 @@ case ":$PATH:" in
     ;;
 esac
 
-# Install active-session detection hooks for whichever provider CLIs are set up.
-# limitping only defers a ping while you're mid-turn when these hooks are present;
-# without them it pings as soon as the window resets, without checking.
-hooked=""
-for p in claude codex; do
-  if [ -d "$HOME/.$p" ] && "$dir/$BIN" hooks install "$p" >/dev/null 2>&1; then
-    hooked="${hooked:+$hooked, }$p"
-  fi
-done
-if [ -n "$hooked" ]; then
-  echo
-  echo "Installed active-session hooks for: $hooked"
-  case "$hooked" in
-    *codex*) echo "  Codex needs a one-time trust: run /hooks inside Codex. (Claude loads automatically.)" ;;
-  esac
-else
-  echo
-  echo "NOTE: no Claude/Codex config found yet — run 'limitping hooks install'"
-  echo "  after setting them up to enable active-session detection."
+echo
+echo "No Claude/Codex settings were modified. Active-session hooks are optional:"
+echo "  limitping hooks install claude"
+if [ "$os" = "darwin" ]; then
+  echo "Persistent macOS service (Claude only by default):"
+  echo "  limitping service install claude"
 fi
 
 "$dir/$BIN" version 2>/dev/null || true

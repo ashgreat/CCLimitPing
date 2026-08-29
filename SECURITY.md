@@ -50,3 +50,7 @@ Out of scope:
   `$CODEX_HOME/auth.json`
 
 Do not share these files or raw `status -v` output in public reports.
+
+Credential refresh and write-back are disabled by default. When explicitly
+enabled on macOS, Keychain updates pass the credential value to `security` over
+standard input rather than exposing it as a process argument.

@@ -62,7 +62,7 @@ type Codex struct {
 func NewCodex(cfg config.ProviderConfig) *Codex {
 	return &Codex{
 		cfg:  cfg,
-		auth: auth.NewCodexAuth(),
+		auth: auth.NewCodexAuth(cfg.RefreshCredentials),
 	}
 }
 
@@ -205,7 +205,7 @@ func NewSpark(cfg config.ProviderConfig) *Spark {
 	}
 	return &Spark{
 		cfg:  cfg,
-		auth: auth.NewCodexAuth(),
+		auth: auth.NewCodexAuth(cfg.RefreshCredentials),
 	}
 }
 

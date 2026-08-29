@@ -3,8 +3,10 @@ package cli
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,7 +20,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const releaseDownloadBase = "https://github.com/wavever/CCLimitPing/releases/latest/download"
+const (
+	releaseDownloadBase = "https://github.com/ashgreat/CCLimitPing/releases/latest/download"
+	releaseChecksumName = "checksums.txt"
+)
 
 func newUpgradeCmd() *cobra.Command {
 	text := localizedText()
@@ -67,6 +72,14 @@ func runUpgrade(ctx context.Context, out, errOut io.Writer) error {
 	if err := downloadFile(ctx, url, archivePath); err != nil {
 		return err
 	}
+	checksumPath := filepath.Join(tmp, releaseChecksumName)
+	if err := downloadFile(ctx, releaseDownloadBase+"/"+releaseChecksumName, checksumPath); err != nil {
+		return fmt.Errorf("downloading release checksums: %w", err)
+	}
+	if err := verifyReleaseChecksum(checksumPath, archivePath); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "Verified SHA-256 checksum")
 	nextBin := filepath.Join(tmp, "limitping")
 	if err := extractLimitping(archivePath, nextBin); err != nil {
 		return err
@@ -83,6 +96,45 @@ func runUpgrade(ctx context.Context, out, errOut io.Writer) error {
 	cmd.Stdout = out
 	cmd.Stderr = errOut
 	_ = cmd.Run()
+	return nil
+}
+
+func verifyReleaseChecksum(checksumsPath, assetPath string) error {
+	f, err := os.Open(checksumsPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	wanted := filepath.Base(assetPath)
+	expected := ""
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 2 && strings.TrimPrefix(fields[1], "*") == wanted {
+			expected = strings.ToLower(fields[0])
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if expected == "" {
+		return fmt.Errorf("release checksum list has no entry for %s", wanted)
+	}
+
+	asset, err := os.Open(assetPath)
+	if err != nil {
+		return err
+	}
+	defer asset.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, asset); err != nil {
+		return err
+	}
+	actual := fmt.Sprintf("%x", h.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("SHA-256 checksum mismatch for %s", wanted)
+	}
 	return nil
 }
 
