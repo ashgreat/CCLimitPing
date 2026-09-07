@@ -5,6 +5,19 @@ All notable changes to this project should be documented here.
 This project uses version tags such as `v0.2.0`. Release binaries are published
 through GitHub Actions and GoReleaser.
 
+## v0.9.3
+
+- Use Claude Code print mode (`claude -p`) for automatic pings. This is the
+  same path verified to work from the user's shell, avoids the TUI failure seen
+  under a macOS LaunchAgent, and provides a dependable exit status.
+- Run the LaunchAgent from the user's home directory so provider CLIs see the
+  same safe working directory as an ordinary terminal session.
+- Treat a future reset timestamp as an active window even when a tiny ping's
+  utilization rounds to zero, preventing successful pings from being repeated.
+- Keep trigger failures on their own exponential backoff instead of resetting
+  the delay after every successful usage read, preventing a broken trigger from
+  retrying every 30 seconds indefinitely.
+
 ## v0.9.2
 
 - Persist the last observed five-hour reset so a window that disappears from

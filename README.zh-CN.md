@@ -64,7 +64,7 @@ limitping service status
 
 | Provider | 读取用量(零消耗) | 触发方式 | 鉴权 |
 |---|---|---|---|
-| **Claude Code** | `…/api/oauth/usage` | 交互式 Claude Code CLI | OAuth(钥匙串 / `~/.claude`) |
+| **Claude Code** | `…/api/oauth/usage` | Claude Code print 模式 | OAuth(钥匙串 / `~/.claude`) |
 | **Codex** | `…/backend-api/wham/usage` | 交互式 Codex CLI | OAuth(`~/.codex/auth.json`) |
 | **Spark** | `…/backend-api/wham/usage` (`additional_rate_limits`) | 使用 `gpt-5.3-codex-spark` 的交互式 Codex CLI | OAuth(`~/.codex/auth.json`) |
 
@@ -74,7 +74,7 @@ limitping service status
 
 | 任务 | 机制 | 代价 |
 |------|------|------|
-| **触发**新窗口 | 官方交互式 CLI(Claude Code / Codex) | 消耗一点额度(这正是功能本身) |
+| **触发**新窗口 | 官方 CLI(Claude print 模式 / 交互式 Codex) | 消耗一点额度(这正是功能本身) |
 | **读取**用量与重置时刻 | 零消耗用量端点(和 CodexBar / 社区插件用的是同一批) | 不消耗,也绝不会起算窗口 |
 
 当 `watch` 发现 5h 窗口已经重置时,会先检查是否有 Claude/Codex 会话正处于对话进行中。
@@ -84,9 +84,9 @@ limitping service status
 窗口一重置就直接 ping(绝不靠扫描进程来猜)。
 
 - **Claude**:用 macOS 钥匙串(`Claude Code-credentials`)或 `~/.claude/.credentials.json`
-  里的 OAuth token,读 `GET https://api.anthropic.com/api/oauth/usage`。触发使用带
-  TTY 的交互式 `claude "<prompt>"` 会话,因此在 headless print 命令改走 Agent
-  SDK/API credits 后仍会起算 Claude 订阅窗口。如果用量端点返回语义不明的
+  里的 OAuth token,读 `GET https://api.anthropic.com/api/oauth/usage`。触发使用非交互式
+  `claude -p --model <model> "<prompt>"`。该方式在 LaunchAgent 下能提供可靠的退出状态,
+  并在当前 Claude Code 版本中起算同一个订阅 5 小时窗口。如果用量端点返回语义不明的
   429,limitping 会调用免费且不创建 Message 的 token-counting 端点,区分真实的
   端点限流与 Claude Code 订阅访问被禁用。
 - **Codex**:用 `~/.codex/auth.json` 里的 OAuth token,读
@@ -210,11 +210,11 @@ limitping uninstall            # 删除 limitping 以及配置/缓存(简称: rm
 | `upgrade` | `up`、`update` |
 | `uninstall` | `rm`、`remove` |
 
-`ping` 会显示具体命令和实时计时(终端下是 spinner)。当前 Claude/Codex/Spark 都用交互式
-触发,CLI 不提供可靠的逐次 machine-readable token/费用数据,所以成功输出通常只显示耗时:
+`ping` 会显示具体命令和实时计时(终端下是 spinner)。Provider CLI 不提供可靠的逐次
+machine-readable token/费用数据,所以成功输出通常只显示耗时:
 
 ```
-claude  → claude --model haiku .
+claude  → claude -p --model haiku .
 claude  ✓ pinged (6.6s)
 codex   → codex -c model_reasoning_effort=low -m gpt-5.4-mini ok
 codex   ✓ pinged (13.6s)
@@ -309,7 +309,7 @@ enabled    = true
 refresh_credentials = false
 prompt     = "."
 model      = "haiku"      # 最便宜的档位;触发并不需要 SOTA 模型
-extra_args = []           # 额外 Claude CLI 参数;print/headless-only 参数会被忽略
+extra_args = []           # 额外 Claude CLI 参数;冲突的输入/输出参数会被忽略
 align_start = ""          # 可选 RFC3339:首个窗口的相位锚点;留空 = 尽快开始
 continue_prompt = "continue"  # continue 在 5h 恢复时注入的消息;留空 = "continue"
 

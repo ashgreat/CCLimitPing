@@ -25,6 +25,8 @@ func TestBuildServicePlistUsesCaffeinateAndAbsoluteBinary(t *testing.T) {
 		"<string>claude</string>",
 		"<key>KeepAlive</key>",
 		"<key>RunAtLoad</key>",
+		"<key>WorkingDirectory</key>",
+		"<string>/Users/test</string>",
 	} {
 		if !strings.Contains(plist, want) {
 			t.Fatalf("plist missing %q:\n%s", want, plist)

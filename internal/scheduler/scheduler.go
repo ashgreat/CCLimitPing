@@ -128,7 +128,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 	name := t.Provider.Name()
-	backoff := minBackoff
+	readBackoff := minBackoff
+	triggerBackoff := minBackoff
 	aligned := t.AlignStart.IsZero() // whether the align gate has been passed
 	lastPingAt := s.state.get(name).LastPingAt
 
@@ -150,18 +151,18 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 				if !sleepCtx(ctx, wait) {
 					return
 				}
-				backoff = minBackoff
+				readBackoff = minBackoff
 				continue
 			}
-			s.log.Printf("[%s] read usage failed: %v (retry in %s)", name, err, backoff)
-			s.live.set(name, "read failed — retrying", time.Now().Add(backoff))
-			if !sleepCtx(ctx, backoff) {
+			s.log.Printf("[%s] read usage failed: %v (retry in %s)", name, err, readBackoff)
+			s.live.set(name, "read failed — retrying", time.Now().Add(readBackoff))
+			if !sleepCtx(ctx, readBackoff) {
 				return
 			}
-			backoff = nextBackoff(backoff)
+			readBackoff = nextBackoff(readBackoff)
 			continue
 		}
-		backoff = minBackoff
+		readBackoff = minBackoff
 		if !u.FiveHour.Missing() {
 			if err := s.state.observeWindow(name, u.FiveHour); err != nil {
 				s.log.Printf("[%s] saving scheduler state failed: %v", name, err)
@@ -233,6 +234,7 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 
 		// If the 5h window is still running, wait until it resets, then ping.
 		if u.FiveHour.Active() {
+			triggerBackoff = minBackoff
 			wait := u.FiveHour.Remaining() + s.cfg.ResetBuffer.Duration
 			s.log.Printf("[%s] 5h window active (%.0f%%), next ping at %s (in %s)",
 				name, u.FiveHour.UsedPercent,
@@ -294,11 +296,11 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 		tcancel()
 		if s.dryRun {
 			if err != nil {
-				s.log.Printf("[%s] dry-run ping failed: %v (retry in %s)", name, err, backoff)
-				if !sleepCtx(ctx, backoff) {
+				s.log.Printf("[%s] dry-run ping failed: %v (retry in %s)", name, err, triggerBackoff)
+				if !sleepCtx(ctx, triggerBackoff) {
 					return
 				}
-				backoff = nextBackoff(backoff)
+				triggerBackoff = nextBackoff(triggerBackoff)
 				continue
 			}
 			s.log.Printf("[%s] DRY-RUN would ping now: %s", name, res.Command)
@@ -315,15 +317,16 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 			continue
 		}
 		if err != nil {
-			s.log.Printf("[%s] ping failed: %v (retry in %s)", name, err, backoff)
-			s.live.set(name, "ping failed — retrying", time.Now().Add(backoff))
+			s.log.Printf("[%s] ping failed: %v (retry in %s)", name, err, triggerBackoff)
+			s.live.set(name, "ping failed — retrying", time.Now().Add(triggerBackoff))
 			s.notify(name+": ping failed", err.Error())
-			if !sleepCtx(ctx, backoff) {
+			if !sleepCtx(ctx, triggerBackoff) {
 				return
 			}
-			backoff = nextBackoff(backoff)
+			triggerBackoff = nextBackoff(triggerBackoff)
 			continue
 		}
+		triggerBackoff = minBackoff
 		lastPingAt = time.Now()
 		if err := s.state.recordPing(name, lastPingAt, windowLen(u.FiveHour)); err != nil {
 			s.log.Printf("[%s] saving scheduler state failed: %v", name, err)

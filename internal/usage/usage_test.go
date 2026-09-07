@@ -15,7 +15,7 @@ func TestWindowActive(t *testing.T) {
 	}{
 		{"zero value", Window{}, false},
 		{"consumption and future reset", Window{UsedPercent: 10, ResetsAt: future}, true},
-		{"no consumption yet", Window{UsedPercent: 0, ResetsAt: future}, false},
+		{"rounded zero usage with future reset", Window{UsedPercent: 0, ResetsAt: future}, true},
 		{"already reset", Window{UsedPercent: 10, ResetsAt: past}, false},
 		{"consumption but no reset time", Window{UsedPercent: 10}, false},
 	}
