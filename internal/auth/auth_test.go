@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -231,8 +232,28 @@ func TestClaudeTokenErrors(t *testing.T) {
 	})
 }
 
+func TestClaudeKeychainReadErrorGuidance(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{"missing", "The specified item could not be found in the keychain.", "claude auth login"},
+		{"interaction denied", "User interaction is not allowed.", "authorize"},
+		{"authorization denied", "Authorization was denied.", "authorize"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := claudeKeychainReadError(errors.New("exit status 44"), tt.output)
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want guidance containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestClaudeRefreshRotatesAndPersists(t *testing.T) {
-	path := writeClaudeCreds(t, `{"claudeAiOauth":{"accessToken":"at-old","refreshToken":"rt-old","scopes":["user:profile"]}}`)
+	path := writeClaudeCreds(t, `{"claudeAiOauth":{"accessToken":"at-old","refreshToken":"rt-old","scopes":["user:profile"]},"mcpOAuth":{"server":{"token":"keep-me"}}}`)
 
 	fakeRefreshEndpoint(t, func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != claudeTokenEndpoint {
@@ -277,6 +298,9 @@ func TestClaudeRefreshRotatesAndPersists(t *testing.T) {
 	}
 	if _, ok := wrapper["expiresAt"]; !ok {
 		t.Fatalf("expiresAt not recorded: %v", wrapper)
+	}
+	if _, ok := raw["mcpOAuth"]; !ok {
+		t.Fatalf("unrelated top-level field lost on write-back: %v", raw)
 	}
 }
 

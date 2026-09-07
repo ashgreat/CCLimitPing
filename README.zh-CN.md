@@ -251,7 +251,10 @@ codex (plus)
 当 Provider 当前不执行某个窗口限制时,对应的窗口键(`five_hour` / `weekly`)会被
 省略——例如 OpenAI 于 2026-07-12 临时取消了 Codex 的 5 小时限制,只保留周限额。
 文本模式下这类窗口会显示「当前未生效」(英文环境: `not currently enforced`),
-`watch` 也会改为在周窗口重置时 ping,而不是每 5 小时一次。
+`watch` 会每 15 分钟通过零额度用量端点重新检查,不会发送 ping。如果它在重置前
+曾观察到 5 小时窗口,而该窗口在重置后消失,则只发送一次 ping 来锚定新窗口;
+否则按仅有周限额处理。最后观察到的重置时间会作为非敏感计时元数据保存在
+`~/.config/limitping/scheduler-state.json`,服务重启后也不会丢失判断上下文。
 
 ```json
 [

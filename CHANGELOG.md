@@ -5,6 +5,18 @@ All notable changes to this project should be documented here.
 This project uses version tags such as `v0.2.0`. Release binaries are published
 through GitHub Actions and GoReleaser.
 
+## v0.9.2
+
+- Persist the last observed five-hour reset so a window that disappears from
+  the usage response immediately after reset is triggered exactly once instead
+  of being mistaken for a permanently weekly-only account.
+- Recheck missing five-hour windows every 15 minutes without spending model
+  quota, allowing the watcher to notice midweek limit changes.
+- Distinguish missing Claude credentials from denied macOS Keychain access and
+  provide an actionable recovery message without exposing credential data.
+  Credential refresh now preserves unrelated top-level Keychain fields such as
+  Claude's MCP OAuth records.
+
 ## v0.9.1
 
 - Added `limitping service install|status|uninstall` for a persistent per-user
