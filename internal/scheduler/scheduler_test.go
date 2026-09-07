@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 type stubProvider struct {
 	mu       sync.Mutex
 	usage    *usage.Usage
+	usages   []*usage.Usage
 	readErr  error
 	trigErr  error
 	active   bool // reported by ActiveTask
@@ -31,6 +33,13 @@ func (p *stubProvider) ReadUsage(context.Context) (*usage.Usage, error) {
 	p.reads++
 	if p.readErr != nil {
 		return nil, p.readErr
+	}
+	if len(p.usages) > 0 {
+		i := p.reads - 1
+		if i >= len(p.usages) {
+			i = len(p.usages) - 1
+		}
+		return p.usages[i], nil
 	}
 	return p.usage, nil
 }
@@ -149,6 +158,114 @@ func TestRunTargetWeeklyOnlySleepsUntilWeeklyReset(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(200 * time.Millisecond):
+		t.Fatal("runTarget did not stop after cancellation")
+	}
+}
+
+func TestRunTargetTriggersWhenObservedWindowDisappearsAtReset(t *testing.T) {
+	p := &stubProvider{usages: []*usage.Usage{
+		{
+			FiveHour: usage.Window{
+				UsedPercent:   25,
+				ResetsAt:      time.Now().Add(30 * time.Millisecond),
+				WindowSeconds: 18000,
+			},
+			Weekly: usage.Window{
+				UsedPercent:   10,
+				ResetsAt:      time.Now().Add(time.Hour),
+				WindowSeconds: 604800,
+			},
+		},
+		{
+			Weekly: usage.Window{
+				UsedPercent:   10,
+				ResetsAt:      time.Now().Add(time.Hour),
+				WindowSeconds: 604800,
+			},
+		},
+	}}
+	stop := runStub(t, Target{Provider: p})
+	defer stop()
+
+	waitFor(t, time.Second, func() bool {
+		_, triggers := p.counts()
+		return triggers == 1
+	})
+	reads, triggers := p.counts()
+	if reads != 2 || triggers != 1 {
+		t.Fatalf("active-to-missing reset should trigger exactly once; reads=%d triggers=%d", reads, triggers)
+	}
+}
+
+func TestRunTargetRestoresObservedResetAfterRestart(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "scheduler-state.json")
+	s1 := New(testConfig(), nil, false, false, io.Discard, WithStateFile(statePath))
+	if err := s1.state.observeWindow("stub", usage.Window{
+		ResetsAt:      time.Now().Add(-time.Second),
+		WindowSeconds: 18000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &stubProvider{usage: &usage.Usage{
+		Weekly: usage.Window{
+			UsedPercent:   10,
+			ResetsAt:      time.Now().Add(time.Hour),
+			WindowSeconds: 604800,
+		},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	s2 := New(testConfig(), []Target{{Provider: p}}, false, false, io.Discard, WithStateFile(statePath))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s2.runTarget(ctx, Target{Provider: p})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("runTarget did not stop after cancellation")
+		}
+	})
+
+	waitFor(t, 500*time.Millisecond, func() bool {
+		_, triggers := p.counts()
+		return triggers == 1
+	})
+}
+
+func TestRunTargetDoesNotRepeatUnconfirmedPingAfterRestart(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "scheduler-state.json")
+	s1 := New(testConfig(), nil, false, false, io.Discard, WithStateFile(statePath))
+	if err := s1.state.recordPing("stub", time.Now().Add(-time.Minute), 5*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &stubProvider{usage: &usage.Usage{
+		Weekly: usage.Window{
+			UsedPercent:   10,
+			ResetsAt:      time.Now().Add(time.Hour),
+			WindowSeconds: 604800,
+		},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	s2 := New(testConfig(), []Target{{Provider: p}}, false, false, io.Discard, WithStateFile(statePath))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s2.runTarget(ctx, Target{Provider: p})
+	}()
+
+	reads, triggers := settleAndCount(t, p)
+	if reads != 1 || triggers != 0 {
+		t.Fatalf("unconfirmed persisted ping should not repeat; reads=%d triggers=%d", reads, triggers)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
 		t.Fatal("runTarget did not stop after cancellation")
 	}
 }

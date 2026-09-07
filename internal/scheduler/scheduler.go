@@ -23,14 +23,15 @@ import (
 )
 
 const (
-	postPingGrace  = 15 * time.Second // wait after a ping before re-reading usage
-	minBackoff     = 30 * time.Second
-	maxBackoff     = 10 * time.Minute
-	rateLimitPause = 5 * time.Minute
-	defaultWindow  = 5 * time.Hour // fallback when the API omits the window length
-	readTimeout    = 30 * time.Second
-	triggerTimeout = 3 * time.Minute
-	activeTaskPoll = time.Minute
+	postPingGrace     = 15 * time.Second // wait after a ping before re-reading usage
+	minBackoff        = 30 * time.Second
+	maxBackoff        = 10 * time.Minute
+	rateLimitPause    = 5 * time.Minute
+	defaultWindow     = 5 * time.Hour // fallback when the API omits the window length
+	readTimeout       = 30 * time.Second
+	triggerTimeout    = 3 * time.Minute
+	activeTaskPoll    = time.Minute
+	weeklyOnlyRecheck = 15 * time.Minute
 )
 
 // Target pairs a provider with its scheduling options.
@@ -47,24 +48,50 @@ type Scheduler struct {
 	dryRun  bool
 	log     *log.Logger
 	live    *liveStatus
+	state   *stateStore
+}
+
+// Option customizes a Scheduler.
+type Option func(*Scheduler)
+
+// WithStateFile persists non-secret per-provider timing metadata at path.
+func WithStateFile(path string) Option {
+	return func(s *Scheduler) {
+		state, err := newStateStore(path)
+		if err != nil {
+			s.log.Printf("scheduler state unavailable at %s: %v; continuing in memory", path, err)
+			return
+		}
+		s.state = state
+	}
 }
 
 // New builds a scheduler that logs to out. When live is true and out is an
 // interactive terminal, a live status line is drawn beneath the scrolling log;
 // otherwise log output passes straight through.
-func New(cfg config.Config, targets []Target, dryRun, live bool, out io.Writer) *Scheduler {
+func New(cfg config.Config, targets []Target, dryRun, live bool, out io.Writer, opts ...Option) *Scheduler {
 	names := make([]string, len(targets))
 	for i, t := range targets {
 		names[i] = t.Provider.Name()
 	}
 	status := newLiveStatus(out, names, live)
-	return &Scheduler{
+	s := &Scheduler{
 		cfg:     cfg,
 		targets: targets,
 		dryRun:  dryRun,
 		log:     log.New(status, "", log.LstdFlags),
 		live:    status,
+		state:   mustMemoryStateStore(),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+func mustMemoryStateStore() *stateStore {
+	s, _ := newStateStore("")
+	return s
 }
 
 // Run starts one loop per target and blocks until ctx is cancelled.
@@ -103,7 +130,7 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 	name := t.Provider.Name()
 	backoff := minBackoff
 	aligned := t.AlignStart.IsZero() // whether the align gate has been passed
-	var lastPingAt time.Time
+	lastPingAt := s.state.get(name).LastPingAt
 
 	for {
 		if ctx.Err() != nil {
@@ -135,6 +162,11 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 			continue
 		}
 		backoff = minBackoff
+		if !u.FiveHour.Missing() {
+			if err := s.state.observeWindow(name, u.FiveHour); err != nil {
+				s.log.Printf("[%s] saving scheduler state failed: %v", name, err)
+			}
+		}
 
 		// A spent credit resets the windows, so this snapshot is stale; re-read
 		// before deciding anything from it.
@@ -159,21 +191,44 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 			continue
 		}
 
-		// A provider can stop enforcing the 5h window entirely (OpenAI
-		// temporarily removed Codex's on 2026-07-12, leaving only the weekly
-		// cap). The running weekly window is already anchored, so the next
-		// useful ping is the one that anchors the weekly window right after
-		// its reset — pinging every 5h would just burn weekly quota.
+		// A missing 5h window is ambiguous: the provider may have removed that
+		// limit, or it may omit a freshly reset window until the first request
+		// anchors it. If we observed the reset beforehand, trigger once. With no
+		// such evidence, recheck periodically without spending model quota.
 		if u.FiveHour.Missing() && u.Weekly.Active() {
-			wait := u.Weekly.Remaining() + s.cfg.ResetBuffer.Duration
-			s.log.Printf("[%s] no 5h window (weekly-only limits, %.0f%%); next ping at weekly reset %s (in %s)",
-				name, u.Weekly.UsedPercent,
-				u.Weekly.ResetsAt.Local().Format("15:04:05"), wait.Round(time.Second))
-			s.live.set(name, fmt.Sprintf("weekly-only %.0f%% — ping at weekly reset", u.Weekly.UsedPercent), time.Now().Add(wait))
-			if !sleepCtx(ctx, wait) {
-				return
+			st := s.state.get(name)
+			now := time.Now()
+			if st.AwaitingConfirmation {
+				if err := s.state.disarmUnconfirmed(name); err != nil {
+					s.log.Printf("[%s] saving scheduler state failed: %v", name, err)
+				}
+				s.log.Printf("[%s] ping was not followed by a visible 5h window; treating limits as weekly-only and rechecking in %s",
+					name, weeklyOnlyRecheck)
+				s.live.set(name, "5h window absent — rechecking", now.Add(weeklyOnlyRecheck))
+				if !sleepCtx(ctx, weeklyOnlyRecheck) {
+					return
+				}
+				continue
 			}
-			continue
+
+			dueAt := st.ExpectedResetAt.Add(s.cfg.ResetBuffer.Duration)
+			observedWindow := time.Duration(st.WindowSeconds) * time.Second
+			observedResetDue := st.WindowSeconds > 0 && !st.ExpectedResetAt.IsZero() &&
+				!now.Before(dueAt) && now.Sub(dueAt) <= observedWindow
+			if observedResetDue {
+				u.FiveHour.WindowSeconds = st.WindowSeconds
+				s.log.Printf("[%s] previously observed 5h window reset at %s and is now absent; triggering once to anchor it",
+					name, st.ExpectedResetAt.Local().Format("15:04:05"))
+			} else {
+				wait := missingWindowRecheck(st, u.Weekly, now, s.cfg.ResetBuffer.Duration)
+				s.log.Printf("[%s] no 5h window (weekly-only or inactive, %.0f%%); rechecking in %s without pinging",
+					name, u.Weekly.UsedPercent, wait.Round(time.Second))
+				s.live.set(name, "5h window absent — rechecking", now.Add(wait))
+				if !sleepCtx(ctx, wait) {
+					return
+				}
+				continue
+			}
 		}
 
 		// If the 5h window is still running, wait until it resets, then ping.
@@ -270,6 +325,9 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 			continue
 		}
 		lastPingAt = time.Now()
+		if err := s.state.recordPing(name, lastPingAt, windowLen(u.FiveHour)); err != nil {
+			s.log.Printf("[%s] saving scheduler state failed: %v", name, err)
+		}
 		s.log.Printf("[%s] ping sent, new window started%s", name, triggerCost(res))
 		s.live.set(name, "ping sent — checking window soon", lastPingAt.Add(postPingGrace))
 		s.notify(name+": window started", "New 5h window"+triggerCost(res))
@@ -341,6 +399,23 @@ func windowLen(w usage.Window) time.Duration {
 		return time.Duration(w.WindowSeconds) * time.Second
 	}
 	return defaultWindow
+}
+
+func missingWindowRecheck(st providerScheduleState, weekly usage.Window, now time.Time, resetBuffer time.Duration) time.Duration {
+	wait := weeklyOnlyRecheck
+	if !st.ExpectedResetAt.IsZero() {
+		untilExpected := st.ExpectedResetAt.Add(resetBuffer).Sub(now)
+		if untilExpected > 0 && untilExpected < wait {
+			wait = untilExpected
+		}
+	}
+	if weeklyRemaining := weekly.Remaining(); weeklyRemaining > 0 && weeklyRemaining < wait {
+		wait = weeklyRemaining + resetBuffer
+	}
+	if wait <= 0 {
+		return time.Minute
+	}
+	return wait
 }
 
 func nextBackoff(d time.Duration) time.Duration {

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,6 +27,7 @@ const claudeOAuthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 const (
 	claudeKeychainService = "Claude Code-credentials"
 	claudeTokenEndpoint   = "https://console.anthropic.com/v1/oauth/token"
+	macSecurityTool       = "/usr/bin/security"
 )
 
 // authHTTPClient performs the OAuth refresh requests; swapped in tests (the
@@ -45,7 +47,9 @@ type ClaudeAuth struct {
 	access       string
 	refresh      string
 	account      string         // Keychain account, needed for write-back (macOS)
+	root         map[string]any // full credential object, including unrelated top-level fields
 	wrapper      map[string]any // full "claudeAiOauth" object, preserved on write-back
+	wrapped      bool           // whether wrapper lives under root["claudeAiOauth"]
 }
 
 // NewClaudeAuth returns an empty holder; the token is loaded lazily. Credential
@@ -150,7 +154,11 @@ func (a *ClaudeAuth) loadLocked() error {
 	wrapper := outer
 	if inner, ok := outer["claudeAiOauth"].(map[string]any); ok {
 		wrapper = inner
+		a.wrapped = true
+	} else {
+		a.wrapped = false
 	}
+	a.root = outer
 	a.wrapper = wrapper
 	a.access, _ = wrapper["accessToken"].(string)
 	a.refresh, _ = wrapper["refreshToken"].(string)
@@ -172,7 +180,14 @@ func (a *ClaudeAuth) persistLocked(expiresIn int64) {
 	if expiresIn > 0 {
 		a.wrapper["expiresAt"] = time.Now().Add(time.Duration(expiresIn) * time.Second).UnixMilli()
 	}
-	out := map[string]any{"claudeAiOauth": a.wrapper}
+	out := a.wrapper
+	if a.wrapped {
+		if a.root == nil {
+			a.root = map[string]any{}
+		}
+		a.root["claudeAiOauth"] = a.wrapper
+		out = a.root
+	}
 	blob, err := json.Marshal(out)
 	if err != nil {
 		return
@@ -183,12 +198,14 @@ func (a *ClaudeAuth) persistLocked(expiresIn int64) {
 // readClaudeBlob returns the raw credentials JSON and (on macOS) the Keychain
 // account name for write-back.
 func readClaudeBlob() (raw []byte, account string, err error) {
+	var keychainErr error
 	if claudeKeychainEnabled {
-		out, err := exec.Command("security", "find-generic-password",
-			"-s", claudeKeychainService, "-w").Output()
+		out, err := exec.Command(macSecurityTool, "find-generic-password",
+			"-s", claudeKeychainService, "-w").CombinedOutput()
 		if err == nil && len(bytes.TrimSpace(out)) > 0 {
 			return bytes.TrimSpace(out), keychainAccount(), nil
 		}
+		keychainErr = claudeKeychainReadError(err, string(out))
 		// fall through to file fallback
 	}
 	home, herr := os.UserHomeDir()
@@ -199,11 +216,31 @@ func readClaudeBlob() (raw []byte, account string, err error) {
 	b, ferr := os.ReadFile(path)
 	if ferr != nil {
 		if claudeKeychainEnabled {
-			return nil, "", fmt.Errorf("claude credentials not found in Keychain (%q) or %s", claudeKeychainService, path)
+			return nil, "", fmt.Errorf("%v; fallback credentials file %s is unavailable", keychainErr, path)
 		}
 		return nil, "", fmt.Errorf("claude credentials not found at %s: %w", path, ferr)
 	}
 	return b, "", nil
+}
+
+func claudeKeychainReadError(cmdErr error, output string) error {
+	detail := strings.TrimSpace(output)
+	lower := strings.ToLower(detail)
+	switch {
+	case strings.Contains(lower, "could not be found") || strings.Contains(lower, "item not found"):
+		return fmt.Errorf("Claude Code credentials are missing from macOS Keychain; run `claude auth login`")
+	case strings.Contains(lower, "interaction is not allowed") ||
+		strings.Contains(lower, "user interaction is not allowed") ||
+		strings.Contains(lower, "authorization was denied") ||
+		strings.Contains(lower, "user canceled"):
+		return fmt.Errorf("macOS Keychain denied background access to Claude Code credentials; authorize `%s find-generic-password -s %q -w` once in Terminal", macSecurityTool, claudeKeychainService)
+	case cmdErr == nil:
+		return fmt.Errorf("macOS Keychain returned an empty Claude Code credential")
+	case detail != "":
+		return fmt.Errorf("reading Claude Code credentials from macOS Keychain failed: %v (%s)", cmdErr, detail)
+	default:
+		return fmt.Errorf("reading Claude Code credentials from macOS Keychain failed: %v", cmdErr)
+	}
 }
 
 var acctRe = regexp.MustCompile(`"acct"<blob>="([^"]*)"`)
@@ -211,7 +248,7 @@ var acctRe = regexp.MustCompile(`"acct"<blob>="([^"]*)"`)
 // keychainAccount reads the account field of the Claude Code credentials item
 // so we can update (not duplicate) it on write-back.
 func keychainAccount() string {
-	out, err := exec.Command("security", "find-generic-password",
+	out, err := exec.Command(macSecurityTool, "find-generic-password",
 		"-s", claudeKeychainService).CombinedOutput()
 	if err != nil {
 		return ""
@@ -231,7 +268,7 @@ func writeClaudeBlob(blob []byte, account string) error {
 			args = append(args, "-a", account)
 		}
 		args = append(args, "-w")
-		cmd := exec.Command("security", args...)
+		cmd := exec.Command(macSecurityTool, args...)
 		cmd.Stdin = bytes.NewReader(append(blob, '\n'))
 		return cmd.Run()
 	}

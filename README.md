@@ -277,8 +277,13 @@ to embed each provider's raw response under `raw`.
 A window key (`five_hour` / `weekly`) is omitted when the provider does not
 currently enforce that limit — e.g. OpenAI temporarily removed Codex's 5h
 window on 2026-07-12, leaving only the weekly cap. Text mode prints
-`not currently enforced` for such a window, and `watch` schedules its ping at
-the weekly reset instead of every 5h.
+`not currently enforced` for such a window. `watch` rechecks the zero-quota
+usage endpoint every 15 minutes without pinging. If it observed a five-hour
+window before the reset and that window then disappears, it sends exactly one
+ping to anchor the new window; otherwise it treats the account as weekly-only.
+The last observed reset is stored as non-secret timing metadata in
+`~/.config/limitping/scheduler-state.json`, so a service restart does not lose
+the decision context.
 
 ```json
 [

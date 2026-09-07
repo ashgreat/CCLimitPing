@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -45,7 +46,15 @@ func newWatchCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			s := scheduler.New(cfg, targets, dryRun, live, cmd.OutOrStdout())
+			var opts []scheduler.Option
+			if !dryRun {
+				dir, err := config.Dir()
+				if err != nil {
+					return err
+				}
+				opts = append(opts, scheduler.WithStateFile(filepath.Join(dir, "scheduler-state.json")))
+			}
+			s := scheduler.New(cfg, targets, dryRun, live, cmd.OutOrStdout(), opts...)
 			s.Run(ctx)
 			return nil
 		},
