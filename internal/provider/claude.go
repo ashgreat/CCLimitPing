@@ -7,14 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/creack/pty"
 
 	"github.com/wavever/CCLimitPing/internal/activity"
 	"github.com/wavever/CCLimitPing/internal/auth"
@@ -40,19 +37,6 @@ const (
 	claudeOAuthOrgCode    = "oauth_org_not_allowed"
 	claudeDisabledText    = "Your organization has disabled Claude subscription access for Claude Code"
 	claudeProbeTimeout    = 10 * time.Second
-
-	// Interactive-trigger timing. The 5h window anchors when the submitted
-	// prompt's request is dispatched, so we wait for the TUI to render and
-	// settle, submit the prompt, let the turn run until its output goes quiet,
-	// then exit cleanly — exiting before the request dispatches leaves the
-	// window unstarted (the original "wait 2s then /exit" bug).
-	claudeStartupTimeout = 10 * time.Second
-	claudeStartupSettle  = 1200 * time.Millisecond
-	claudeTurnMinWait    = 4 * time.Second
-	claudeTurnQuiet      = 2500 * time.Millisecond
-	claudeTurnMaxWait    = 45 * time.Second
-	claudeExitGrace      = 5 * time.Second
-	claudePollInterval   = 200 * time.Millisecond
 )
 
 var (
@@ -74,10 +58,9 @@ func (*ClaudeSubscriptionAccessError) Error() string {
 
 func (e *ClaudeSubscriptionAccessError) Unwrap() error { return e.Err }
 
-// Claude reads usage via the OAuth usage endpoint and triggers windows via the
-// interactive, TTY-backed Claude Code CLI. The interactive path follows the
-// same subscription-backed flow as a normal Claude Code session even if
-// Anthropic changes headless-mode accounting in the future.
+// Claude reads usage via the OAuth usage endpoint and triggers windows via
+// Claude Code's non-interactive print mode. Unlike a synthetic PTY session,
+// print mode has a clear exit status and works reliably from a LaunchAgent.
 type Claude struct {
 	cfg  config.ProviderConfig
 	auth *auth.ClaudeAuth
@@ -260,11 +243,11 @@ func (c *Claude) Trigger(ctx context.Context, dryRun bool) (*TriggerResult, erro
 	if prompt == "" {
 		prompt = "."
 	}
-	args := []string{}
+	args := []string{"-p"}
 	if c.cfg.Model != "" {
 		args = append(args, "--model", c.cfg.Model)
 	}
-	args = append(args, claudeInteractiveArgs(c.cfg.ExtraArgs)...)
+	args = append(args, claudePingArgs(c.cfg.ExtraArgs)...)
 	args = append(args, prompt)
 
 	res := &TriggerResult{Command: "claude " + shellJoin(args)}
@@ -272,108 +255,18 @@ func (c *Claude) Trigger(ctx context.Context, dryRun bool) (*TriggerResult, erro
 		return res, nil
 	}
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return res, fmt.Errorf("claude interactive failed to start: %w", err)
-	}
-	defer ptmx.Close()
-
-	output := &limitedBuffer{limit: 4096}
-	go func() {
-		_, _ = io.Copy(output, ptmx)
-	}()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	// Phase 1: wait for the TUI to render and settle so the submit Enter lands on
-	// a ready prompt holding the prefilled message.
-	if terminal, err := claudeAwait(ctx, cmd, ptmx, output, done, claudeStartupTimeout,
-		func(idle, _ time.Duration) bool { return idle >= claudeStartupSettle }); terminal {
-		return res, err
-	}
-
-	// Submit the prefilled prompt. This is the model request that anchors the 5h
-	// window; the previous implementation never sent it, so the window never
-	// started even though the session exited cleanly.
-	if _, werr := ptmx.Write([]byte("\r")); werr != nil {
-		return res, fmt.Errorf("claude interactive failed to submit prompt: %w: %s", werr, truncate(output.Bytes(), 300))
-	}
-
-	// Phase 2: let the turn run until its output goes quiet (bounded by a floor
-	// and a hard cap), so we don't cancel the in-flight request by exiting early.
-	if terminal, err := claudeAwait(ctx, cmd, ptmx, output, done, claudeTurnMaxWait,
-		func(idle, elapsed time.Duration) bool {
-			return elapsed >= claudeTurnMinWait && idle >= claudeTurnQuiet
-		}); terminal {
-		return res, err
-	}
-
-	// Phase 3: quit. The window is already anchored, so a messy shutdown here
-	// must not fail the ping.
-	_, _ = ptmx.Write([]byte("/exit\r"))
-	select {
-	case err := <-done:
-		return res, claudeInteractiveErr(err, output)
-	case <-ctx.Done():
-		return res, claudeInteractiveCancel(ctx, cmd, ptmx, done, output)
-	case <-time.After(claudeExitGrace):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-		}
-		if accessErr := claudeSubscriptionErrorFromOutput(output.Bytes()); accessErr != nil {
-			return res, accessErr
-		}
-		return res, nil
-	}
-}
-
-// claudeAwait polls the interactive session until ready(idle, elapsed) reports
-// the desired state or maxWait elapses, where idle is the time since the last
-// PTY output and elapsed is the time since this phase began. It returns
-// terminal=true (with an error to propagate) only if the process exits or ctx is
-// cancelled first; otherwise terminal=false and the caller continues.
-func claudeAwait(ctx context.Context, cmd *exec.Cmd, ptmx *os.File, output *limitedBuffer, done <-chan error, maxWait time.Duration, ready func(idle, elapsed time.Duration) bool) (bool, error) {
-	start := time.Now()
-	deadline := time.After(maxWait)
-	ticker := time.NewTicker(claudePollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case err := <-done:
-			return true, claudeInteractiveErr(err, output)
-		case <-ctx.Done():
-			return true, claudeInteractiveCancel(ctx, cmd, ptmx, done, output)
-		case <-deadline:
-			return false, nil
-		case <-ticker.C:
-			changed := output.changedAt()
-			if !changed.IsZero() && ready(time.Since(changed), time.Since(start)) {
-				return false, nil
-			}
-		}
-	}
-}
-
-func claudeInteractiveErr(err error, output *limitedBuffer) error {
-	if accessErr := claudeSubscriptionErrorFromOutput(output.Bytes()); accessErr != nil {
-		return accessErr
+	output, err := exec.CommandContext(ctx, "claude", args...).CombinedOutput()
+	if accessErr := claudeSubscriptionErrorFromOutput(output); accessErr != nil {
+		return res, accessErr
 	}
 	if err == nil {
-		return nil
+		return res, nil
 	}
-	tail := truncate(output.Bytes(), 300)
-	if tail == "" {
-		return fmt.Errorf("claude interactive failed: %w", err)
+	detail := claudeDiagnosticTail(output, 500)
+	if detail == "" {
+		return res, fmt.Errorf("claude print failed: %w", err)
 	}
-	return fmt.Errorf("claude interactive failed: %w: %s", err, tail)
+	return res, fmt.Errorf("claude print failed: %w: %s", err, detail)
 }
 
 // claudeSubscriptionErrorFromOutput reports the denial Claude Code printed
@@ -386,37 +279,18 @@ func claudeSubscriptionErrorFromOutput(raw []byte) error {
 	return nil
 }
 
-func claudeInteractiveCancel(ctx context.Context, cmd *exec.Cmd, ptmx *os.File, done <-chan error, output *limitedBuffer) error {
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
-	_ = ptmx.Close()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-	}
-	if accessErr := claudeSubscriptionErrorFromOutput(output.Bytes()); accessErr != nil {
-		return accessErr
-	}
-	tail := truncate(output.Bytes(), 300)
-	if tail == "" {
-		return fmt.Errorf("claude interactive cancelled: %w", ctx.Err())
-	}
-	return fmt.Errorf("claude interactive cancelled: %w: %s", ctx.Err(), tail)
-}
-
-func claudeInteractiveArgs(extra []string) []string {
+func claudePingArgs(extra []string) []string {
 	out := make([]string, 0, len(extra))
 	for i := 0; i < len(extra); i++ {
 		arg := extra[i]
 		flag, inlineValue := splitFlagValue(arg)
-		if claudeInteractiveUnsupportedValueArg(flag) {
+		if claudePingUnsupportedValueArg(flag) {
 			if !inlineValue && i+1 < len(extra) {
 				i++
 			}
 			continue
 		}
-		if claudeInteractiveUnsupportedArg(flag) {
+		if claudePingUnsupportedArg(flag) {
 			continue
 		}
 		out = append(out, arg)
@@ -433,7 +307,7 @@ func splitFlagValue(arg string) (flag string, inlineValue bool) {
 	return arg, false
 }
 
-func claudeInteractiveUnsupportedArg(flag string) bool {
+func claudePingUnsupportedArg(flag string) bool {
 	switch flag {
 	case "-p", "--print", "--bare", "--init", "--maintenance", "--include-hook-events",
 		"--include-partial-messages", "--replay-user-messages", "--prompt-suggestions",
@@ -444,7 +318,7 @@ func claudeInteractiveUnsupportedArg(flag string) bool {
 	}
 }
 
-func claudeInteractiveUnsupportedValueArg(flag string) bool {
+func claudePingUnsupportedValueArg(flag string) bool {
 	switch flag {
 	case "--output-format", "--input-format", "--json-schema", "--max-turns",
 		"--max-budget-usd", "--permission-prompt-tool", "--fallback-model":
@@ -452,6 +326,21 @@ func claudeInteractiveUnsupportedValueArg(flag string) bool {
 	default:
 		return false
 	}
+}
+
+func claudeDiagnosticTail(raw []byte, limit int) string {
+	plain := claudeANSIEscapeRE.ReplaceAllString(string(raw), " ")
+	plain = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, plain)
+	plain = strings.Join(strings.Fields(plain), " ")
+	if len(plain) <= limit {
+		return plain
+	}
+	return "…" + plain[len(plain)-limit:]
 }
 
 type limitedBuffer struct {

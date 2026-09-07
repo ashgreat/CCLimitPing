@@ -13,8 +13,8 @@ import (
 	"github.com/wavever/CCLimitPing/internal/config"
 )
 
-func TestClaudeInteractiveArgsDropsPrintOnlyFlags(t *testing.T) {
-	got := claudeInteractiveArgs([]string{
+func TestClaudePingArgsDropsConflictingFlags(t *testing.T) {
+	got := claudePingArgs([]string{
 		"--max-turns", "1",
 		"--output-format=json",
 		"--tools", "Read",
@@ -28,7 +28,7 @@ func TestClaudeInteractiveArgsDropsPrintOnlyFlags(t *testing.T) {
 	}
 }
 
-func TestClaudeTriggerDryRunUsesInteractiveCommand(t *testing.T) {
+func TestClaudeTriggerDryRunUsesPrintCommand(t *testing.T) {
 	c := NewClaude(config.ProviderConfig{
 		Prompt: ".",
 		Model:  "haiku",
@@ -42,11 +42,11 @@ func TestClaudeTriggerDryRunUsesInteractiveCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry-run trigger: %v", err)
 	}
-	if res.Command != "claude --model haiku ." {
-		t.Fatalf("command = %q, want %q", res.Command, "claude --model haiku .")
+	if res.Command != "claude -p --model haiku ." {
+		t.Fatalf("command = %q, want %q", res.Command, "claude -p --model haiku .")
 	}
-	if strings.Contains(res.Command, " -p") || strings.Contains(res.Command, "--print") {
-		t.Fatalf("command still uses headless mode: %q", res.Command)
+	if !strings.Contains(res.Command, " -p") {
+		t.Fatalf("command does not use print mode: %q", res.Command)
 	}
 }
 
@@ -236,7 +236,7 @@ func TestClaudeSubscriptionDeniedResponse(t *testing.T) {
 	}
 }
 
-func TestClaudeInteractiveErrRecognizesSubscriptionDenial(t *testing.T) {
+func TestClaudeOutputRecognizesSubscriptionDenial(t *testing.T) {
 	// Claude Code renders this error inside a bordered box, so the sentence
 	// reaches us coloured and word-wrapped.
 	cases := []struct {
@@ -261,13 +261,18 @@ func TestClaudeInteractiveErrRecognizesSubscriptionDenial(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			output := &limitedBuffer{limit: 4096}
-			_, _ = output.Write([]byte(tc.output))
-			err := claudeInteractiveErr(nil, output)
+			err := claudeSubscriptionErrorFromOutput([]byte(tc.output))
 			var accessErr *ClaudeSubscriptionAccessError
 			if errors.As(err, &accessErr) != tc.want {
 				t.Fatalf("error = %T %v, want denial = %t", err, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestClaudeDiagnosticTailStripsTerminalNoiseAndKeepsEnd(t *testing.T) {
+	got := claudeDiagnosticTail([]byte("\x1b[31mstart\x1b[0m\r\n"+strings.Repeat("x", 20)+" useful error"), 18)
+	if got != "…xxxxx useful error" {
+		t.Fatalf("diagnostic tail = %q", got)
 	}
 }

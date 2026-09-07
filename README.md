@@ -74,7 +74,7 @@ provider quota: `limitping ping --dry-run`, `limitping watch --dry-run`, or
 
 | Provider | Read usage (zero-quota) | Trigger | Auth |
 |---|---|---|---|
-| **Claude Code** | `…/api/oauth/usage` | interactive Claude Code CLI | OAuth (Keychain / `~/.claude`) |
+| **Claude Code** | `…/api/oauth/usage` | Claude Code print mode | OAuth (Keychain / `~/.claude`) |
 | **Codex** | `…/backend-api/wham/usage` | interactive Codex CLI | OAuth (`~/.codex/auth.json`) |
 | **Spark** | `…/backend-api/wham/usage` (`additional_rate_limits`) | interactive Codex CLI with `gpt-5.3-codex-spark` | OAuth (`~/.codex/auth.json`) |
 
@@ -84,7 +84,7 @@ Two cleanly separated jobs:
 
 | Job | Mechanism | Cost |
 |-----|-----------|------|
-| **Trigger** a new window | the official interactive CLI (Claude Code / Codex) | a tiny slice of quota (this is the point) |
+| **Trigger** a new window | the official CLI (Claude print mode / interactive Codex) | a tiny slice of quota (this is the point) |
 | **Read** usage & reset times | zero-quota usage endpoints (the same ones CodexBar / community plugins use) | none — never starts a window |
 
 When `watch` sees a 5h window has reset, it first checks whether a Claude/Codex
@@ -96,10 +96,10 @@ them, `limitping` skips the check and pings as soon as the window resets.
 
 - **Claude**: reads `GET https://api.anthropic.com/api/oauth/usage` using the
   OAuth token from the macOS Keychain (`Claude Code-credentials`) or
-  `~/.claude/.credentials.json`. Triggering uses a TTY-backed interactive
-  `claude "<prompt>"` session. This follows the same subscription-backed path
-  as a normal Claude Code session and remains robust if headless-mode accounting
-  changes in the future. If the usage endpoint returns an ambiguous 429, limitping
+  `~/.claude/.credentials.json`. Triggering uses the non-interactive
+  `claude -p --model <model> "<prompt>"` path. It returns a dependable process
+  status under a LaunchAgent and, in current Claude Code releases, starts the
+  same subscription-backed five-hour window. If the usage endpoint returns an ambiguous 429, limitping
   uses the free token-counting endpoint (which does not create a Message) to
   distinguish a real endpoint throttle from Claude Code subscription access
   being disabled.
@@ -235,12 +235,11 @@ Short aliases are also available for config commands: `limitping c i` for
 | `uninstall` | `rm`, `remove` |
 
 `ping` shows the exact command and a live timer (a spinner on a terminal).
-Current Claude/Codex/Spark interactive trigger sessions do not expose reliable
-machine-readable per-ping token or cost data, so success output normally shows
-elapsed time only:
+The provider CLIs do not expose reliable machine-readable per-ping token or
+cost data, so success output normally shows elapsed time only:
 
 ```
-claude  → claude --model haiku .
+claude  → claude -p --model haiku .
 claude  ✓ pinged (6.6s)
 codex   → codex -c model_reasoning_effort=low -m gpt-5.4-mini ok
 codex   ✓ pinged (13.6s)
@@ -338,7 +337,7 @@ enabled    = true
 refresh_credentials = false # read-only; log in again if the OAuth token expires
 prompt     = "."
 model      = "haiku"      # cheapest tier; triggering doesn't need a SOTA model
-extra_args = []           # extra Claude CLI args; print/headless-only flags are ignored
+extra_args = []           # extra Claude CLI args; conflicting I/O flags are ignored
 align_start = ""          # optional RFC3339 anchor for the first window; empty = start ASAP
 continue_prompt = "continue"  # message `continue` injects on 5h recovery; empty = "continue"
 
@@ -461,8 +460,9 @@ limitping service install claude  # RunAtLoad + KeepAlive + caffeinate -s
 limitping service status
 ```
 
-The service records the absolute binary path and your current `PATH`, starts at
-login, restarts after failure, and by default uses `caffeinate -s` to prevent
+The service records the absolute binary path, your current `PATH`, and your home
+folder as its working directory. It starts at login, restarts after failure,
+and by default uses `caffeinate -s` to prevent
 idle system sleep while the Mac is connected to AC power. It cannot run while a
 laptop lid is closed or the Mac is otherwise forced to sleep. Use
 `--prevent-sleep=false` if you do not want the AC-power sleep assertion. Logs

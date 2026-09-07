@@ -13,11 +13,11 @@ type Window struct {
 	WindowSeconds int
 }
 
-// Active reports whether the window currently has consumption recorded and has
-// not yet reset. A freshly reset (or never-started) window is inactive, which
-// is the signal the scheduler uses to decide whether to ping immediately.
+// Active reports whether the provider has assigned a reset in the future.
+// Providers can round a minimal ping's utilization down to zero, so the reset
+// timestamp—not UsedPercent—is the authoritative sign that a window started.
 func (w Window) Active() bool {
-	return w.UsedPercent > 0 && !w.ResetsAt.IsZero() && time.Now().Before(w.ResetsAt)
+	return !w.ResetsAt.IsZero() && time.Now().Before(w.ResetsAt)
 }
 
 // Missing reports whether the provider returned no data for this window at

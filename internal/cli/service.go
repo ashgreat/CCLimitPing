@@ -297,6 +297,8 @@ func buildServicePlist(o servicePlistOptions) string {
     <key>PATH</key>
     <string>%s</string>
   </dict>
+  <key>WorkingDirectory</key>
+  <string>%s</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -311,7 +313,7 @@ func buildServicePlist(o servicePlistOptions) string {
   <string>%s</string>
 </dict>
 </plist>
-`, serviceLabel, argXML.String(), xmlText(o.Home), xmlText(o.Path), xmlText(o.StdoutPath), xmlText(o.StderrPath))
+`, serviceLabel, argXML.String(), xmlText(o.Home), xmlText(o.Path), xmlText(o.Home), xmlText(o.StdoutPath), xmlText(o.StderrPath))
 }
 
 func xmlText(s string) string {

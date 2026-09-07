@@ -13,7 +13,7 @@ import (
 )
 
 // Version is the binary version, overridable at build time via -ldflags.
-var Version = "0.9.2"
+var Version = "0.9.3"
 
 // Execute runs the root command.
 func Execute() error {
