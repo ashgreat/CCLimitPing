@@ -142,7 +142,7 @@ func fetchWithAuth(ctx context.Context, src tokenSource, buildReq func(token str
 	if status == http.StatusUnauthorized {
 		t, rerr := src.Refresh(ctx)
 		if rerr != nil {
-			return nil, fmt.Errorf("unauthorized and refresh failed: %w", rerr)
+			return nil, fmt.Errorf("unauthorized (%s) and refresh failed: %w", truncate(body, 300), rerr)
 		}
 		token = t
 		if body, status, header, err = doGet(ctx, token, buildReq); err != nil {

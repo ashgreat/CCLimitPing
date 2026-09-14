@@ -294,6 +294,11 @@ func TestFetchWithAuthReportsRefreshFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "refresh failed") || !strings.Contains(err.Error(), "grant revoked") {
 		t.Fatalf("error = %v, want unauthorized+refresh failure", err)
 	}
+	// The endpoint's 401 body says why the token was rejected (expired vs
+	// revoked); keep it in the message.
+	if !strings.Contains(err.Error(), `{"error":"unauthorized"}`) {
+		t.Fatalf("error = %v, want the 401 body included", err)
+	}
 }
 
 func TestUsageHTTPErrorMessage(t *testing.T) {

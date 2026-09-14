@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -29,6 +30,12 @@ const (
 	claudeTokenEndpoint   = "https://console.anthropic.com/v1/oauth/token"
 	macSecurityTool       = "/usr/bin/security"
 )
+
+// ErrRefreshDisabled marks a stored token that was rejected and that limitping
+// may not rotate itself (refresh_credentials = false). Only the official CLI
+// refreshes it, so callers that can run that CLI — the scheduler's ping — use
+// this to break the read-before-ping deadlock instead of retrying the read.
+var ErrRefreshDisabled = errors.New("credential refresh is disabled")
 
 // authHTTPClient performs the OAuth refresh requests; swapped in tests (the
 // same seam the provider package uses for its usage client).
@@ -92,7 +99,7 @@ func (a *ClaudeAuth) Refresh(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.allowRefresh {
-		return "", fmt.Errorf("claude credential refresh is disabled; log in with Claude Code again or set claude.refresh_credentials = true")
+		return "", fmt.Errorf("claude %w; run `claude` once so it refreshes the token, or set claude.refresh_credentials = true", ErrRefreshDisabled)
 	}
 	if a.refresh == "" {
 		if err := a.loadLocked(); err != nil {
@@ -163,7 +170,9 @@ func (a *ClaudeAuth) loadLocked() error {
 	a.access, _ = wrapper["accessToken"].(string)
 	a.refresh, _ = wrapper["refreshToken"].(string)
 	if a.access == "" {
-		return fmt.Errorf("claude credentials: no accessToken found")
+		// Claude Code clears the entry when its refresh token is rejected, so
+		// this is the "session is dead" state: only a fresh login fixes it.
+		return fmt.Errorf("claude credentials: no accessToken found; run `claude auth login`")
 	}
 	return nil
 }

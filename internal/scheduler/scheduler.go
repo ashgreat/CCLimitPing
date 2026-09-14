@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wavever/CCLimitPing/internal/auth"
 	"github.com/wavever/CCLimitPing/internal/config"
 	"github.com/wavever/CCLimitPing/internal/notify"
 	"github.com/wavever/CCLimitPing/internal/provider"
@@ -142,6 +143,17 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 		rctx, cancel := context.WithTimeout(ctx, readTimeout)
 		u, err := t.Provider.ReadUsage(rctx)
 		cancel()
+		if err != nil && errors.Is(err, auth.ErrRefreshDisabled) {
+			// The stored token expired and limitping may not rotate it; only the
+			// official CLI can, and the ping is what runs that CLI. Retrying the
+			// read would wait forever, so continue with an empty snapshot: the
+			// loop below pings once the last ping is a window old, and the read
+			// after the ping picks up the refreshed token.
+			// ponytail: empty snapshot = "no window info"; it schedules by the
+			// default 5h window until the read recovers.
+			s.log.Printf("[%s] usage unreadable: %v; pinging on schedule so the official CLI refreshes the token", name, err)
+			u, err = &usage.Usage{Provider: name, FetchedAt: time.Now()}, nil
+		}
 		if err != nil {
 			var httpErr *provider.UsageHTTPError
 			if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusTooManyRequests {

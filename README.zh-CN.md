@@ -98,7 +98,9 @@ limitping service status
   `gpt-5.3-codex-spark` 模型发送 ping,并作为独立的 `spark` Provider 展示。
 
 Claude/Codex 的 token 直接复用官方工具(无需另外登录)。默认不会刷新或写回凭据；遇到
-401 时会安全停止并要求重新登录。只有明确设置 `refresh_credentials = true` 才会自动刷新。
+401 时会先重新读取官方凭据。若 token 仍已过期，`status` 会报告该错误，而 `watch` 会按上次
+ping 的时间照常发送 ping:ping 会运行官方 CLI 并由其刷新 token，随后的用量读取即可恢复。
+只有明确设置 `refresh_credentials = true` 才会由 limitping 自动刷新。
 
 ## 安装
 
