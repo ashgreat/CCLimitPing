@@ -5,6 +5,19 @@ All notable changes to this project should be documented here.
 This project uses version tags such as `v0.2.0`. Release binaries are published
 through GitHub Actions and GoReleaser.
 
+## v0.9.4
+
+- Fix Claude pings stopping after the first cycle under read-only credentials.
+  Claude Code's OAuth access token expires after some hours, and with
+  `refresh_credentials = false` only the official CLI may refresh it — but
+  `watch` never ran that CLI, because the usage read failed first with "OAuth
+  access token has expired" and was retried forever. `watch` now treats that
+  failure as stale credentials, pings on schedule from the last recorded ping,
+  and lets `claude -p` refresh the token before the next usage read.
+- Include the usage endpoint's 401 body in the error so an expired token is
+  distinguishable from a revoked login, and point the recovery hint at running
+  the official CLI once instead of logging in again.
+
 ## v0.9.3
 
 - Use Claude Code print mode (`claude -p`) for automatic pings. This is the

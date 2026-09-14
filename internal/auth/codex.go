@@ -79,7 +79,7 @@ func (a *CodexAuth) Refresh(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.allowRefresh {
-		return "", fmt.Errorf("codex credential refresh is disabled; log in with Codex again or set codex.refresh_credentials = true")
+		return "", fmt.Errorf("codex %w; run `codex` once so it refreshes the token, or set codex.refresh_credentials = true", ErrRefreshDisabled)
 	}
 	if a.refresh == "" {
 		if err := a.loadLocked(); err != nil {

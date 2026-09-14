@@ -114,8 +114,11 @@ them, `limitping` skips the check and pings as soon as the window resets.
 
 Claude/Codex tokens are reused from the official tools (no separate login).
 Credential refresh and write-back are disabled by default. On a 401, limitping
-first reloads the official credential store, then fails closed and asks you to
-log in again. Set `refresh_credentials = true` for a provider only if you
+first reloads the official credential store. If the stored token is still
+expired, `status` reports it, and `watch` does not wait for a read that cannot
+recover: it pings on schedule from the last recorded ping, the ping runs the
+official CLI (which refreshes the token), and the next usage read picks up the
+fresh token. Set `refresh_credentials = true` for a provider only if you
 explicitly accept automatic OAuth refresh and write-back. Spark reuses Codex's
 setting and token.
 

@@ -3,12 +3,14 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/wavever/CCLimitPing/internal/auth"
 	"github.com/wavever/CCLimitPing/internal/config"
 	"github.com/wavever/CCLimitPing/internal/provider"
 	"github.com/wavever/CCLimitPing/internal/usage"
@@ -524,5 +526,61 @@ func TestTriggerCost(t *testing.T) {
 	want := " — 100 tok (in 90 / out 10), $0.0110"
 	if got := triggerCost(res); got != want {
 		t.Fatalf("triggerCost = %q, want %q", got, want)
+	}
+}
+
+// staleCredentialsErr mirrors what ReadUsage returns when the stored token is
+// rejected and refresh_credentials is off: fetchWithAuth wraps the auth
+// holder's ErrRefreshDisabled error.
+func staleCredentialsErr() error {
+	return fmt.Errorf("unauthorized (token expired) and refresh failed: %w",
+		fmt.Errorf("claude %w; run `claude` once", auth.ErrRefreshDisabled))
+}
+
+func TestRunTargetPingsOnScheduleWhenCredentialsStale(t *testing.T) {
+	// Read-only mode cannot refresh the token and nothing else runs the CLI on
+	// a headless box, so the read would fail forever. The ping itself runs the
+	// CLI, which refreshes the token: with no earlier ping on record, ping now.
+	p := &stubProvider{readErr: staleCredentialsErr()}
+	stop := runStub(t, Target{Provider: p})
+	defer stop()
+
+	waitFor(t, 500*time.Millisecond, func() bool {
+		_, triggers := p.counts()
+		return triggers == 1
+	})
+	time.Sleep(50 * time.Millisecond)
+	if _, triggers := p.counts(); triggers != 1 {
+		t.Fatalf("stale credentials should ping exactly once; triggers = %d", triggers)
+	}
+}
+
+func TestRunTargetWaitsForScheduleWhenCredentialsStale(t *testing.T) {
+	// With a recent ping on record the window is still running, so a stale
+	// token must not cause an early extra ping; wait for the window instead.
+	statePath := filepath.Join(t.TempDir(), "scheduler-state.json")
+	s1 := New(testConfig(), nil, false, false, io.Discard, WithStateFile(statePath))
+	if err := s1.state.recordPing("stub", time.Now().Add(-time.Hour), 5*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &stubProvider{readErr: staleCredentialsErr()}
+	ctx, cancel := context.WithCancel(context.Background())
+	s2 := New(testConfig(), []Target{{Provider: p}}, false, false, io.Discard, WithStateFile(statePath))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s2.runTarget(ctx, Target{Provider: p})
+	}()
+
+	reads, triggers := settleAndCount(t, p)
+	if reads != 1 || triggers != 0 {
+		t.Fatalf("stale credentials inside a running window should wait; reads=%d triggers=%d", reads, triggers)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("runTarget did not stop after cancellation")
 	}
 }
