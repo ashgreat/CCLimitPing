@@ -482,9 +482,9 @@ launchctl kickstart gui/$(id -u)/com.ashgreat.limitping          # start if stop
 tail -n 5 ~/.config/limitping/service.log                        # confirm what it did
 ```
 
-Restart after upgrading the binary, after re-authenticating a CLI, or when a
-limit resets early. When the weekly limit is exhausted, the watcher sleeps until
-the scheduled weekly reset and does not notice an early reset until it restarts.
+Restart after upgrading the binary or after re-authenticating a CLI. When the
+weekly limit is exhausted, the watcher rechecks usage every 15 minutes (no quota
+used), so an early weekly reset is picked up without a restart.
 Running `limitping service install claude` again also reinstalls and restarts it.
 
 ## Auto-continue a parked task

@@ -33,6 +33,10 @@ const (
 	triggerTimeout    = 3 * time.Minute
 	activeTaskPoll    = time.Minute
 	weeklyOnlyRecheck = 15 * time.Minute
+	// Usage reads cost no quota, so an exhausted weekly limit is rechecked
+	// periodically to catch an early reset instead of sleeping until the
+	// scheduled one.
+	weeklyExhaustedRecheck = 15 * time.Minute
 )
 
 // Target pairs a provider with its scheduling options.
@@ -132,6 +136,7 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 	readBackoff := minBackoff
 	triggerBackoff := minBackoff
 	aligned := t.AlignStart.IsZero() // whether the align gate has been passed
+	weeklyReported := false          // log/notify an exhausted weekly limit once, not every recheck
 	lastPingAt := s.state.get(name).LastPingAt
 
 	for {
@@ -190,19 +195,20 @@ func (s *Scheduler) runTarget(ctx context.Context, t Target) {
 		// Respect the weekly limit: if exhausted (and no usable credits), wait
 		// for the weekly window to reset instead of pinging.
 		if s.weeklyExhausted(u) {
-			wait := u.Weekly.Remaining() + s.cfg.ResetBuffer.Duration
-			if wait <= 0 {
-				wait = time.Minute
+			wait := weeklyExhaustedWait(u.Weekly, s.cfg.ResetBuffer.Duration)
+			if !weeklyReported {
+				s.log.Printf("[%s] weekly limit exhausted (%.0f%%); weekly reset in %s, rechecking every %s in case it resets early",
+					name, u.Weekly.UsedPercent, u.Weekly.Remaining().Round(time.Second), weeklyExhaustedRecheck)
+				s.notify(name+": weekly limit reached", "Skipping pings until weekly reset")
+				weeklyReported = true
 			}
-			s.log.Printf("[%s] weekly limit exhausted (%.0f%%); sleeping %s until weekly reset",
-				name, u.Weekly.UsedPercent, wait.Round(time.Second))
-			s.live.set(name, fmt.Sprintf("weekly limit reached (%.0f%%)", u.Weekly.UsedPercent), time.Now().Add(wait))
-			s.notify(name+": weekly limit reached", "Skipping pings until weekly reset")
+			s.live.set(name, fmt.Sprintf("weekly limit reached (%.0f%%) — rechecking", u.Weekly.UsedPercent), time.Now().Add(wait))
 			if !sleepCtx(ctx, wait) {
 				return
 			}
 			continue
 		}
+		weeklyReported = false
 
 		// A missing 5h window is ambiguous: the provider may have removed that
 		// limit, or it may omit a freshly reset window until the first request
@@ -414,6 +420,16 @@ func windowLen(w usage.Window) time.Duration {
 		return time.Duration(w.WindowSeconds) * time.Second
 	}
 	return defaultWindow
+}
+
+// weeklyExhaustedWait sleeps until the weekly reset, capped at
+// weeklyExhaustedRecheck so an early reset is noticed.
+func weeklyExhaustedWait(weekly usage.Window, resetBuffer time.Duration) time.Duration {
+	wait := weekly.Remaining() + resetBuffer
+	if wait <= 0 {
+		return time.Minute
+	}
+	return min(wait, weeklyExhaustedRecheck)
 }
 
 func missingWindowRecheck(st providerScheduleState, weekly usage.Window, now time.Time, resetBuffer time.Duration) time.Duration {
