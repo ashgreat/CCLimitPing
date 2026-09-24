@@ -5,6 +5,15 @@ All notable changes to this project should be documented here.
 This project uses version tags such as `v0.2.0`. Release binaries are published
 through GitHub Actions and GoReleaser.
 
+## v0.9.5
+
+- Catch an early weekly-limit reset. When the weekly limit was exhausted,
+  `watch` slept until the scheduled weekly reset (up to days) and kept skipping
+  pings after an early reset until it was restarted. It now rechecks usage every
+  15 minutes (a zero-quota read), and logs and notifies once per exhaustion
+  instead of on every recheck.
+- Document how to start or restart the macOS LaunchAgent with `launchctl`.
+
 ## v0.9.4
 
 - Fix Claude pings stopping after the first cycle under read-only credentials.
