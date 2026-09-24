@@ -359,6 +359,20 @@ func TestRunTargetWeeklyExhaustedSleepsUntilReset(t *testing.T) {
 	}
 }
 
+func TestWeeklyExhaustedWait(t *testing.T) {
+	week := usage.Window{ResetsAt: time.Now().Add(72 * time.Hour)}
+	if got := weeklyExhaustedWait(week, 0); got != weeklyExhaustedRecheck {
+		t.Fatalf("distant weekly reset should be rechecked every %s, got %s", weeklyExhaustedRecheck, got)
+	}
+	soon := usage.Window{ResetsAt: time.Now().Add(5 * time.Minute)}
+	if got := weeklyExhaustedWait(soon, 10*time.Second); got <= 5*time.Minute || got > 5*time.Minute+10*time.Second {
+		t.Fatalf("near weekly reset should sleep until reset+buffer, got %s", got)
+	}
+	if got := weeklyExhaustedWait(usage.Window{}, 0); got != time.Minute {
+		t.Fatalf("unknown weekly reset should retry in a minute, got %s", got)
+	}
+}
+
 func TestRunTargetCreditsBypassWeeklyLimit(t *testing.T) {
 	p := &stubProvider{
 		usage: &usage.Usage{

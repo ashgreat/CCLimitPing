@@ -473,6 +473,20 @@ are under `~/.config/limitping/`. `service status` also reports the watcher PID
 and seven-day ping success/failure history. `limitping service uninstall`
 removes only the LaunchAgent and preserves configuration and logs.
 
+### Start or restart the service
+
+```sh
+limitping service status                                         # is it running?
+launchctl kickstart -k gui/$(id -u)/com.ashgreat.limitping       # restart now
+launchctl kickstart gui/$(id -u)/com.ashgreat.limitping          # start if stopped
+tail -n 5 ~/.config/limitping/service.log                        # confirm what it did
+```
+
+Restart after upgrading the binary or after re-authenticating a CLI. When the
+weekly limit is exhausted, the watcher rechecks usage every 15 minutes (no quota
+used), so an early weekly reset is picked up without a restart.
+Running `limitping service install claude` again also reinstalls and restarts it.
+
 ## Auto-continue a parked task
 
 `watch` and `bg` keep your window chain warm, but they don't resume a task that
